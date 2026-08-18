@@ -115,7 +115,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v14';
+  var VERSION = 'v15';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -125,6 +125,7 @@
   var pollTimer = null;      // sondeo periodico de la seleccion
   var eventos = [];          // nombres de eventos recibidos, para diagnostico
   var eventosDetalle = [];   // evento + carga util, para localizar el punto de clic
+  var ultimoPick = null;     // punto 3D del ultimo clic sobre una superficie
   var ultimaSelCruda = null; // ultimo getSelection() sin procesar
   var centroActual = null;   // centro de la pieza mostrada en el panel
   var metaActual = null;     // CLASS / GUID / NAME de esa pieza
@@ -495,6 +496,59 @@
     }
   }
 
+  // -- Punto del clic (viewer.onPicked) ----------------------------
+  // No conocemos la forma exacta de la carga util, asi que se busca en
+  // profundidad la primera terna de coordenadas, dando prioridad a las claves
+  // que suenan a posicion.
+  function coordsDe(o){
+    if (!o || typeof o !== 'object') return null;
+    var n = function(v){ return (typeof v === 'number' && isFinite(v)) ? v : null; };
+    var x = n(o.positionX), y = n(o.positionY), z = n(o.positionZ);
+    if (x !== null && y !== null && z !== null) return { x: x, y: y, z: z };
+    x = n(o.x); y = n(o.y); z = n(o.z);
+    if (x !== null && y !== null && z !== null) return { x: x, y: y, z: z };
+    return null;
+  }
+
+  function buscarPunto(o, prof){
+    if (!o || typeof o !== 'object' || prof > 6) return null;
+    var propio = coordsDe(o);
+    if (propio) return propio;
+    // Primero las claves con nombre de posicion, luego el resto.
+    var pref = ['position', 'point', 'pickPoint', 'worldPosition', 'hitPoint', 'coordinates', 'location'];
+    var k, r;
+    for (k = 0; k < pref.length; k++){
+      if (o[pref[k]]){ r = buscarPunto(o[pref[k]], prof + 1); if (r) return r; }
+    }
+    if (Array.isArray(o)){
+      for (k = 0; k < o.length; k++){ r = buscarPunto(o[k], prof + 1); if (r) return r; }
+      return null;
+    }
+    for (k in o){
+      if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+      if (pref.indexOf(k) >= 0) continue;
+      r = buscarPunto(o[k], prof + 1);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  function buscarIds(o, prof, acc){
+    acc = acc || {};
+    if (!o || typeof o !== 'object' || prof > 6) return acc;
+    if (acc.modelId == null && typeof o.modelId === 'string') acc.modelId = o.modelId;
+    if (acc.rid == null){
+      if (o.objectRuntimeId != null) acc.rid = o.objectRuntimeId;
+      else if (Array.isArray(o.objectRuntimeIds) && o.objectRuntimeIds.length) acc.rid = o.objectRuntimeIds[0];
+    }
+    for (var k in o){
+      if (!Object.prototype.hasOwnProperty.call(o, k)) continue;
+      if (acc.modelId != null && acc.rid != null) break;
+      buscarIds(o[k], prof + 1, acc);
+    }
+    return acc;
+  }
+
   // -- Posición 3D: centro del bounding box ------------------------
   function num(v){ return typeof v === 'number' ? v : Number(v); }
 
@@ -505,8 +559,9 @@
     for (var i = 0; i < arr.length; i++){
       if (arr[i] && (String(arr[i].id) === String(rid) || String(arr[i].objectRuntimeId) === String(rid))){ entry = arr[i]; break; }
     }
+    var dudosa = false;
     if (!entry){
-      if (arr.length === 1) entry = arr[0];
+      if (arr.length === 1){ entry = arr[0]; dudosa = true; }   // sin id que casar
       else throw new Error('la caja devuelta no corresponde al objeto ' + rid);
     }
     var bb = entry.boundingBox || entry.bbox || entry;
@@ -522,9 +577,12 @@
         dy = Math.abs(num(max.y) - num(min.y)),
         dz = Math.abs(num(max.z) - num(min.z));
     var tam = Math.max(dx, dy, dz);
-    c.sep = isFinite(tam) && tam > 0 ? tam * 0.35 : 0;
+    // Si la caja no venia identificada puede ser la del modelo entero: usar su
+    // tamano para separar el texto daria una linea guia gigante.
+    c.sep = dudosa ? 0.5 : (isFinite(tam) && tam > 0 ? tam * 0.35 : 0.5);
     c.topZ = num(max.z);
     if (!isFinite(c.topZ)) c.topZ = c.z;
+    c.dudosa = dudosa;   // la caja no venia identificada: puede ser la del modelo
     return c;
   }
 
@@ -606,7 +664,7 @@
     var antesArr = await leerMarkups(mk);
     var antes = antesArr === null ? null : antesArr.length;
 
-    var markups = [], duenos = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0;
+    var markups = [], duenos = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0, conPick = 0;
 
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
@@ -614,6 +672,13 @@
         // Cada pieza lee SUS parametros y SU caja. El centro primero, porque
         // puede formar parte del propio texto de la etiqueta.
         var c = await readCenter(obj.modelId, obj.rid);
+        // Si el visor nos dio el punto exacto del clic sobre esta pieza, ese
+        // manda: viene ya en el espacio correcto y pertenece al elemento.
+        if (ultimoPick && (ultimoPick.rid == null || String(ultimoPick.rid) === String(obj.rid))){
+          c.x = ultimoPick.x; c.y = ultimoPick.y; c.z = ultimoPick.z;
+          c.topZ = ultimoPick.z;
+          conPick++;
+        }
         var entries = [];
         try { entries = await readEntries(obj.modelId, obj.rid); } catch(e){ entries = []; }
         var lineas = lineasDe(entries, obj, c, entries.meta);
@@ -674,6 +739,8 @@
     var msg = (reales !== null)
       ? reales + ' de ' + sel.length + ' etiquetas creadas'
       : ok + ' enviadas, ' + fallos + ' fallo(s)';
+    if (conPick) msg += ' · ' + conPick + ' ancladas en el punto del clic';
+    else if (markups.length) msg += ' · ancladas por bounding box (sin punto de clic)';
     if (sinDatos) msg += ' · ' + sinDatos + ' sin esos parámetros (se usó el ID)';
     if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición';
     msg += avisoPos;
@@ -714,6 +781,13 @@
       eventosDetalle.push(ev + ' → ' + d);
     } catch(err){ eventosDetalle.push(ev + ' → (no serializable)'); }
     if (eventosDetalle.length > 10) eventosDetalle.shift();
+    if (/pick/i.test(String(ev))){
+      var pt = buscarPunto(data, 0);
+      if (pt){
+        var ids = buscarIds(data, 0, {});
+        ultimoPick = { x: pt.x, y: pt.y, z: pt.z, modelId: ids.modelId, rid: ids.rid, ts: Date.now() };
+      }
+    }
     if (!/selection|select/i.test(String(ev))) return;
     if (selTimer) clearTimeout(selTimer);
     selTimer = setTimeout(function(){ selTimer = null; sincronizar(false); }, 350);
@@ -788,6 +862,9 @@
       partes.push('getSelection(): ' + crudaTxt);
       partes.push('Piezas interpretadas: ' + parseSel(cruda).length + ' · en panel: ' + sel.length);
       partes.push('Eventos recibidos: ' + (eventos.length ? eventos.join(', ') : 'NINGUNO'));
+      partes.push('Último clic (onPicked): ' + (ultimoPick
+        ? ultimoPick.x + ', ' + ultimoPick.y + ', ' + ultimoPick.z + '  rid=' + ultimoPick.rid
+        : 'NINGUNO capturado'));
       partes.push('API: ' + Object.keys(API).join(', '));
       if (API.viewer) partes.push('API.viewer: ' + Object.keys(API.viewer).join(', '));
       if (eventosDetalle.length){
