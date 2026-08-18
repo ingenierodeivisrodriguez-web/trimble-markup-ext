@@ -38,7 +38,7 @@
   .tog input:checked~.tog-th{transform:translateX(14px)}
   .badge{font-size:9px;background:var(--a);color:var(--bg);padding:1px 5px;border-radius:3px;display:none;animation:pulse 1.5s infinite}
   .badge.on{display:block}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-  .status{margin-top:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;line-height:1.4;color:var(--m);padding:8px 10px;background:var(--s);border:1px solid var(--b);border-radius:6px;min-height:32px;display:flex;align-items:center;word-break:break-word}
+  .status{margin-top:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;line-height:1.4;color:var(--m);padding:8px 10px;background:var(--s);border:1px solid var(--b);border-radius:6px;min-height:32px;max-height:150px;overflow-y:auto;display:block;word-break:break-word;white-space:pre-wrap;user-select:text}
   .status.ok{color:var(--a);border-color:rgba(0,212,170,.35)}
   .status.err{color:var(--err);border-color:rgba(255,71,87,.35)}
   .status.info{color:var(--warn)}
@@ -75,6 +75,7 @@
 
   <button class="btn btn-p" id="btnC" disabled>Crear etiquetas</button>
   <button class="btn btn-s" id="btnR">↻ Actualizar propiedades</button>
+  <button class="btn btn-s" id="btnD">🔍 Diagnóstico de markup</button>
 
   <div class="status" id="status">Conectando…</div>
 </div>
@@ -82,7 +83,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v6';
+  var VERSION = 'v7';
   var ID_OPT = '__id__', CUSTOM_OPT = '__custom__';
 
   var API = null, sel = [], autoOn = false, lastIds = '', selTimer = null, running = false;
@@ -356,6 +357,33 @@
     };
   }
 
+  // No solo varian los nombres de la coordenada: tambien la clave contenedora.
+  // Si el host espera startPoint/endPoint y solo mandamos start/end, no encuentra
+  // el punto y coloca la etiqueta en el origen. Mandamos todos los alias.
+  function construirMarkup(id, texto, c, obj){
+    var anc = pick(c.x, c.y, c.z,            obj.modelId, obj.rid);
+    var txt = pick(c.x, c.y, c.topZ + c.sep, obj.modelId, obj.rid);
+    return {
+      id: id,
+      text: texto,
+      color: { r: 0, g: 212, b: 170, a: 255 },
+      start: anc,      end: txt,
+      startPoint: anc, endPoint: txt,
+      from: anc,       to: txt,
+      position: anc,
+      positionX: c.x, positionY: c.y, positionZ: c.z,
+      x: c.x, y: c.y, z: c.z,
+      modelId: obj.modelId, objectId: obj.rid
+    };
+  }
+
+  // Version minima y estrictamente documentada, por si el host rechaza extras.
+  function markupMinimo(m){
+    var p = { positionX: m.positionX, positionY: m.positionY, positionZ: m.positionZ,
+              modelId: m.modelId, objectId: m.objectId };
+    return { id: m.id, text: m.text, color: m.color, start: p, end: p };
+  }
+
   // Extrae la coordenada de un markup ya guardado, sea cual sea su forma.
   function posDe(m){
     var p = m && (m.start || m.startPoint || m.position || m);
@@ -445,13 +473,7 @@
 
         // start = ancla en la propia pieza; end = texto justo encima de ella.
         // Con start y end iguales el visor coloca todos los textos juntos.
-        markups.push({
-          id: uid(),
-          text: label,
-          start: pick(c.x, c.y, c.z,             obj.modelId, obj.rid),
-          end:   pick(c.x, c.y, c.topZ + c.sep, obj.modelId, obj.rid),
-          color: { r: 0, g: 212, b: 170, a: 255 }
-        });
+        markups.push(construirMarkup(uid(), label, c, obj));
         meta.push(label);
       } catch(e){
         errPrep++;
@@ -471,15 +493,21 @@
             await mk.addTextMarkup([markups[k]]);
             ok++;
           } catch(e2){
-            // Ultimo recurso por si este host rechaza un id propio.
+            // Escalera de respaldo: forma minima documentada, y luego sin id por
+            // si este host no admite que se lo fijemos nosotros.
             try {
-              var sinId = {};
-              for (var p in markups[k]) if (p !== 'id') sinId[p] = markups[k][p];
-              await mk.addTextMarkup([sinId]);
+              await mk.addTextMarkup([markupMinimo(markups[k])]);
               ok++;
             } catch(e3){
-              errEnvio++;
-              ultimoError = errMsg(e3);
+              try {
+                var sinId = markupMinimo(markups[k]);
+                delete sinId.id;
+                await mk.addTextMarkup([sinId]);
+                ok++;
+              } catch(e4){
+                errEnvio++;
+                ultimoError = errMsg(e4);
+              }
             }
           }
         }
@@ -510,9 +538,13 @@
         if (pz === null) continue;
         if (!posSet[pz]){ posSet[pz] = 1; nPos++; }
       }
-      if (nuestros.length > 1 && nPos === 1){
-        var claves = Object.keys(nuestros[0].start || nuestros[0] || {}).join(',');
-        avisoPos = ' · ⚠ el visor guardó 1 sola posición (' + posDe(nuestros[0]) + ') · campos: ' + claves;
+      // nPos === 0 significa que no supimos leer la coordenada guardada: eso
+      // tambien es un fallo, antes se colaba en silencio.
+      if (nuestros.length > 1 && nPos <= 1){
+        avisoPos = nPos === 1
+          ? '\n⚠ el visor guardó 1 sola posición para las ' + nuestros.length + ': ' + posDe(nuestros[0])
+          : '\n⚠ no se pudo leer la posición guardada.';
+        avisoPos += '\nPulsa «Diagnóstico de markup» y envía el volcado.';
       }
     }
 
@@ -592,6 +624,34 @@
       setStatus('Error al actualizar: ' + errMsg(e), 'err');
     }
   });
+  // Vuelca la estructura real de un markup guardado por ESTE host: es la unica
+  // forma fiable de saber bajo que claves guarda la coordenada.
+  $('btnD').addEventListener('click', async function(){
+    var mk = markupApi();
+    if (!mk){ setStatus('No hay API de markup en este contexto.', 'err'); return; }
+    setStatus('Leyendo markups guardados…', 'info');
+    try {
+      var guardados = await leerMarkups(mk);
+      var partes = [];
+      partes.push('API.markup: ' + Object.keys(mk).join(', '));
+      if (guardados === null){
+        partes.push('El host no expone getMarkups/getTextMarkups/getAllMarkups.');
+      } else if (!guardados.length){
+        partes.push('No hay markups guardados. Crea una etiqueta y vuelve a pulsar.');
+      } else {
+        var ult = guardados[guardados.length - 1];
+        partes.push('Total guardados: ' + guardados.length);
+        partes.push('Claves del markup: ' + Object.keys(ult).join(', '));
+        var txt = JSON.stringify(ult, null, 1);
+        if (txt.length > 1200) txt = txt.slice(0, 1200) + '…';
+        partes.push(txt);
+      }
+      setStatus(partes.join('\n'), 'info');
+    } catch(e){
+      setStatus('Diagnóstico falló: ' + errMsg(e), 'err');
+    }
+  });
+
   $('auto').addEventListener('change', function(e){
     autoOn = e.target.checked;
     $('badge').classList.toggle('on', autoOn);
