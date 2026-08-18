@@ -22,6 +22,11 @@ la próxima sesión arranca como la dejaste.
 
 ## Los parámetros salen del modelo
 
+CLASS, GUID y NAME no están en los property sets: son metadatos del objeto y viven en la
+raíz de la respuesta de `getObjectProperties`. Se extraen aparte y se ofrecen como los tres
+primeros parámetros, igual que en la herramienta de etiquetas de Trimble. Si el modelo los
+trae dentro de un property set, se buscan también ahí.
+
 No hay lista fija de nombres. Al seleccionar una pieza, la extensión llama a
 `getObjectProperties` y muestra los parámetros que **esa pieza tiene**, agrupados por property
 set y con su valor actual al lado. Así el nombre elegido siempre coincide con el del IFC, sea
@@ -29,6 +34,9 @@ cual sea el exportador o el idioma del modelo.
 
 Además del listado, siempre están disponibles:
 
+- **CLASS** — la clase IFC del objeto (`IFCWALL`, `IFCBUILDINGELEMENTPART`…).
+- **GUID** — el identificador global del objeto.
+- **NAME** — el nombre del objeto.
 - **ID (objectRuntimeId)** — el identificador interno de la pieza.
 - **Punto único (X, Y, Z)** — el centro de la pieza, por si quieres las coordenadas dentro
   del propio texto de la etiqueta.
@@ -90,7 +98,7 @@ Trimble Connect → **Extensiones** → **Añadir extensión personalizada**, y 
 https://ingenierodeivisrodriguez-web.github.io/trimble-markup-ext/manifest.json
 ```
 
-La cabecera del panel muestra la versión (`v11`). Si no coincide con la última, recarga con
+La cabecera del panel muestra la versión (`v12`). Si no coincide con la última, recarga con
 Ctrl+F5: el navegador está sirviendo una copia cacheada.
 
 ## Archivos

@@ -115,8 +115,9 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v11';
+  var VERSION = 'v12';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
+  var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
 
   var API = null, sel = [], autoOn = true, lastIds = '', selTimer = null, running = false;
@@ -125,6 +126,8 @@
   var eventos = [];          // nombres de eventos recibidos, para diagnostico
   var ultimaSelCruda = null; // ultimo getSelection() sin procesar
   var centroActual = null;   // centro de la pieza mostrada en el panel
+  var metaActual = null;     // CLASS / GUID / NAME de esa pieza
+  var raizActual = null;     // respuesta cruda, para el diagnostico
   var available = [];        // parametros reales de la pieza seleccionada
   var elegidos = [];         // parametros marcados por el usuario (persisten)
   var extras = [];           // parametros anadidos a mano por nombre exacto
@@ -200,9 +203,13 @@
   function pintarProps(){
     propsBox.innerHTML = '';
 
+    var m = metaActual || {};
     var filas = [
-      { set: 'General', name: 'ID (objectRuntimeId)', qualified: ID_OPT, value: sel.length ? sel[0].rid : null },
-      { set: 'General', name: 'Punto único (X, Y, Z)', qualified: CENTRO_OPT, value: fmtCoord(centroActual) }
+      { set: 'Objeto', name: 'CLASS', qualified: CLASS_OPT, value: m.CLASS },
+      { set: 'Objeto', name: 'GUID',  qualified: GUID_OPT,  value: m.GUID },
+      { set: 'Objeto', name: 'NAME',  qualified: NAME_OPT,  value: m.NAME },
+      { set: 'Objeto', name: 'ID (objectRuntimeId)', qualified: ID_OPT, value: sel.length ? sel[0].rid : null },
+      { set: 'Objeto', name: 'Punto único (X, Y, Z)', qualified: CENTRO_OPT, value: fmtCoord(centroActual) }
     ];
     var i;
     for (i = 0; i < available.length; i++) filas.push(available[i]);
@@ -243,9 +250,7 @@
           nom.textContent = f.name;
           var val = document.createElement('span');
           val.className = 'pr-v';
-          var v = (f.qualified === ID_OPT || f.qualified === CENTRO_OPT)
-            ? (f.value == null ? '' : String(f.value))
-            : fmtVal(f.value);
+          var v = (f.set === 'Objeto') ? (f.value == null ? '' : String(f.value)) : fmtVal(f.value);
           val.textContent = v === null ? '' : v;
           fila.appendChild(chk); fila.appendChild(nom); fila.appendChild(val);
           propsBox.appendChild(fila);
@@ -264,8 +269,8 @@
   }
 
   // Texto de la etiqueta, en el orden en que aparecen los parametros.
-  function lineasDe(entries, obj, centro){
-    var orden = [ID_OPT, CENTRO_OPT];
+  function lineasDe(entries, obj, centro, meta){
+    var orden = [CLASS_OPT, GUID_OPT, NAME_OPT, ID_OPT, CENTRO_OPT];
     var i;
     for (i = 0; i < available.length; i++) orden.push(available[i].qualified);
     for (i = 0; i < extras.length; i++) orden.push(extras[i]);
@@ -281,6 +286,12 @@
       var corta = clave.indexOf('/') >= 0 ? clave.slice(clave.indexOf('/') + 1) : clave;
       if (usados[corta]) continue;
       usados[corta] = 1;
+      if (q === CLASS_OPT || q === GUID_OPT || q === NAME_OPT){
+        var mm = meta || {};
+        var mv = q === CLASS_OPT ? mm.CLASS : q === GUID_OPT ? mm.GUID : mm.NAME;
+        if (mv) lineas.push(String(mv));
+        continue;
+      }
       if (q === ID_OPT){ lineas.push(String(obj.rid)); continue; }
       if (q === CENTRO_OPT){ var fc = fmtCoord(centro); if (fc) lineas.push(fc); continue; }
       var v = matchValue(entries, q);
@@ -292,7 +303,7 @@
   function updPrev(){
     if (!sel.length){ prev.textContent = '—'; return; }
     if (!elegidos.length){ prev.textContent = 'Marca al menos un parámetro.'; return; }
-    var l = lineasDe(available, sel[0], centroActual);
+    var l = lineasDe(available, sel[0], centroActual, metaActual);
     prev.textContent = l.length ? l.join('\n') : '(la pieza no tiene esos parámetros)';
   }
 
@@ -393,8 +404,28 @@
     return s.length ? s : null;
   }
 
+  // CLASS, GUID y NAME son metadatos del objeto: viven en la raiz de la
+  // respuesta, no dentro de los property sets. El nombre del campo varia segun
+  // el exportador, asi que se prueban los alias conocidos.
+  function metaDe(raiz){
+    var m = { CLASS: null, GUID: null, NAME: null };
+    if (!raiz || typeof raiz !== 'object') return m;
+    var s = function(v){
+      if (typeof v === 'string' && v.trim()) return v.trim();
+      if (typeof v === 'number' && isFinite(v)) return String(v);
+      return null;
+    };
+    var p = (raiz.product && typeof raiz.product === 'object') ? raiz.product : {};
+    m.CLASS = s(raiz['class']) || s(raiz.ifcClass) || s(raiz.className) || s(p['class']) || s(raiz.type);
+    m.GUID  = s(raiz.guid) || s(raiz.globalId) || s(raiz.GlobalId) || s(raiz.ifcGuid) ||
+              s(raiz.externalId) || s(p.guid) || s(p.globalId);
+    m.NAME  = s(raiz.name) || s(p.name) || s(raiz.objectName);
+    return m;
+  }
+
   async function readEntries(modelId, rid){
     var props = await API.viewer.getObjectProperties(modelId, [rid]);
+    var raiz = Array.isArray(props) ? props[0] : props;
     var entries = [];
     flatten(props, null, entries, 0);
     var seen = {}, out = [];
@@ -405,6 +436,14 @@
       seen[e.qualified.toLowerCase()] = 1;
       out.push(e);
     }
+    // Si el modelo no trae los metadatos en la raiz, se buscan entre las
+    // propiedades: algunos exportadores los meten en un property set.
+    var meta = metaDe(raiz);
+    if (!meta.GUID)  meta.GUID  = matchValue(out, 'GUID') || matchValue(out, 'GlobalId') || matchValue(out, 'IfcGUID');
+    if (!meta.NAME)  meta.NAME  = matchValue(out, 'NAME') || matchValue(out, 'Name');
+    if (!meta.CLASS) meta.CLASS = matchValue(out, 'CLASS') || matchValue(out, 'IfcClass');
+    out.meta = meta;
+    out.raiz = raiz;
     return out;
   }
 
@@ -432,7 +471,7 @@
 
   async function loadProps(anunciar){
     if (!API || !sel.length){
-      available = []; centroActual = null;
+      available = []; centroActual = null; metaActual = null;
       pintarProps(); updPrev();
       return;
     }
@@ -441,12 +480,14 @@
     catch(e){ centroActual = null; }
     try {
       available = await readEntries(sel[0].modelId, sel[0].rid);
+      metaActual = available.meta || null;
+      raizActual = available.raiz || null;
       pintarProps(); updPrev();
       if (anunciar){
         setStatus(available.length + ' parámetros leídos de la pieza.', available.length ? 'ok' : 'info');
       }
     } catch(e){
-      available = [];
+      available = []; metaActual = null;
       pintarProps(); updPrev();
       setStatus('No se pudieron leer los parámetros: ' + errMsg(e), 'err');
     }
@@ -560,7 +601,7 @@
         var c = await readCenter(obj.modelId, obj.rid);
         var entries = [];
         try { entries = await readEntries(obj.modelId, obj.rid); } catch(e){ entries = []; }
-        var lineas = lineasDe(entries, obj, c);
+        var lineas = lineasDe(entries, obj, c, entries.meta);
         if (!lineas.length){ lineas = ['ID: ' + obj.rid]; sinDatos++; }
         var clave = c.x + '|' + c.y + '|' + c.z;
         if (centros[clave]) repetidas++; else centros[clave] = 1;
@@ -720,6 +761,13 @@
       partes.push('getSelection(): ' + crudaTxt);
       partes.push('Piezas interpretadas: ' + parseSel(cruda).length + ' · en panel: ' + sel.length);
       partes.push('Eventos recibidos: ' + (eventos.length ? eventos.join(', ') : 'NINGUNO'));
+      if (raizActual && typeof raizActual === 'object'){
+        partes.push('getObjectProperties raíz: ' + Object.keys(raizActual).join(', '));
+        var mm = metaActual || {};
+        partes.push('CLASS=' + (mm.CLASS || '(no encontrado)') +
+                    ' · GUID=' + (mm.GUID || '(no encontrado)') +
+                    ' · NAME=' + (mm.NAME || '(no encontrado)'));
+      }
       partes.push('');
 
       var guardados = await leerMarkups(mk);
