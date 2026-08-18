@@ -115,7 +115,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v13';
+  var VERSION = 'v14';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -133,6 +133,7 @@
   var elegidos = [];         // parametros marcados por el usuario (persisten)
   var extras = [];           // parametros anadidos a mano por nombre exacto
   var creados = [];          // ids de los markups que hemos creado nosotros
+  var etiquetaDe = {};       // modelId:rid -> id del markup, para reemplazarlo
 
   var $ = function(id){ return document.getElementById(id); };
   var dot = $('dot'), cnt = $('cnt'), sd = $('sd'), btnC = $('btnC'),
@@ -553,14 +554,15 @@
     return { type: 'point', positionX: x, positionY: y, positionZ: z };
   }
 
-  // La etiqueta se ancla en el centro de la pieza: start y end son el mismo
-  // punto, para que el texto salga justo ahi y no desplazado.
+  // start = ancla sobre el elemento; end = donde flota el texto. La separacion
+  // es proporcional al tamano de la pieza, para que la linea guia se vea igual
+  // de bien en un tornillo que en un muro.
   function construirMarkup(texto, c){
     return {
       text: texto,
       color: colorRGBA(),
       start: pick(c.x, c.y, c.z),
-      end:   pick(c.x, c.y, c.z)
+      end:   pick(c.x, c.y, c.topZ + c.sep)
     };
   }
 
@@ -589,10 +591,22 @@
     running = true; updUI();
     setStatus('Etiquetando ' + sel.length + ' pieza(s)…', 'info');
 
+    // Cada pieza tiene como mucho una etiqueta: se retira la anterior antes de
+    // poner la nueva, para no acumular duplicados al recorrer el modelo.
+    var previas = [], cl;
+    for (var pz = 0; pz < sel.length; pz++){
+      cl = sel[pz].modelId + ':' + sel[pz].rid;
+      if (etiquetaDe[cl] != null){ previas.push(etiquetaDe[cl]); delete etiquetaDe[cl]; }
+    }
+    if (previas.length && typeof mk.removeMarkups === 'function'){
+      try { await mk.removeMarkups(previas); } catch(e){}
+      creados = creados.filter(function(id){ return previas.indexOf(id) < 0; });
+    }
+
     var antesArr = await leerMarkups(mk);
     var antes = antesArr === null ? null : antesArr.length;
 
-    var markups = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0;
+    var markups = [], duenos = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0;
 
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
@@ -608,6 +622,7 @@
         if (centros[clave]) repetidas++; else centros[clave] = 1;
 
         markups.push(construirMarkup(lineas.join('\n'), c));
+        duenos.push(obj.modelId + ':' + obj.rid);
       } catch(e){
         errPrep++;
       }
@@ -636,7 +651,10 @@
     if (guardados && guardados.length && markups.length){
       var nuestros = guardados.slice(-markups.length), k2;
       for (k2 = 0; k2 < nuestros.length; k2++){
-        if (nuestros[k2] && nuestros[k2].id != null) creados.push(nuestros[k2].id);
+        if (nuestros[k2] && nuestros[k2].id != null){
+          creados.push(nuestros[k2].id);
+          if (duenos[k2]) etiquetaDe[duenos[k2]] = nuestros[k2].id;
+        }
       }
       var posSet = {}, nPos = 0;
       for (k2 = 0; k2 < nuestros.length; k2++){
@@ -678,7 +696,7 @@
       if (creados.length) await mk.removeMarkups(creados.slice());
       else await mk.removeMarkups();
       setStatus('Etiquetas borradas.', 'ok');
-      creados = [];
+      creados = []; etiquetaDe = {};
     } catch(e){
       setStatus('No se pudieron borrar: ' + errMsg(e), 'err');
     }
