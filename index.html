@@ -115,7 +115,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v12';
+  var VERSION = 'v13';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -124,6 +124,7 @@
   var selIds = '';           // firma de la seleccion ya procesada
   var pollTimer = null;      // sondeo periodico de la seleccion
   var eventos = [];          // nombres de eventos recibidos, para diagnostico
+  var eventosDetalle = [];   // evento + carga util, para localizar el punto de clic
   var ultimaSelCruda = null; // ultimo getSelection() sin procesar
   var centroActual = null;   // centro de la pieza mostrada en el panel
   var metaActual = null;     // CLASS / GUID / NAME de esa pieza
@@ -687,6 +688,14 @@
   // Acepta cualquier evento de seleccion, se llame como se llame en este host.
   function onEvent(ev, data){
     if (eventos.indexOf(ev) < 0){ eventos.push(ev); if (eventos.length > 25) eventos.shift(); }
+    // Guardamos la carga util: si algun evento trae la coordenada del clic,
+    // aparecera aqui y podremos anclar la etiqueta en la superficie pinchada.
+    try {
+      var d = JSON.stringify(data);
+      if (d && d.length > 260) d = d.slice(0, 260) + '…';
+      eventosDetalle.push(ev + ' → ' + d);
+    } catch(err){ eventosDetalle.push(ev + ' → (no serializable)'); }
+    if (eventosDetalle.length > 10) eventosDetalle.shift();
     if (!/selection|select/i.test(String(ev))) return;
     if (selTimer) clearTimeout(selTimer);
     selTimer = setTimeout(function(){ selTimer = null; sincronizar(false); }, 350);
@@ -761,6 +770,20 @@
       partes.push('getSelection(): ' + crudaTxt);
       partes.push('Piezas interpretadas: ' + parseSel(cruda).length + ' · en panel: ' + sel.length);
       partes.push('Eventos recibidos: ' + (eventos.length ? eventos.join(', ') : 'NINGUNO'));
+      partes.push('API: ' + Object.keys(API).join(', '));
+      if (API.viewer) partes.push('API.viewer: ' + Object.keys(API.viewer).join(', '));
+      if (eventosDetalle.length){
+        partes.push('Últimos eventos con datos:');
+        for (var q = 0; q < eventosDetalle.length; q++) partes.push('  ' + eventosDetalle[q]);
+      }
+      if (sel.length){
+        try {
+          var bbRaw = await API.viewer.getObjectBoundingBoxes(sel[0].modelId, [sel[0].rid]);
+          var bbTxt = JSON.stringify(bbRaw);
+          if (bbTxt && bbTxt.length > 320) bbTxt = bbTxt.slice(0, 320) + '…';
+          partes.push('boundingBox crudo: ' + bbTxt);
+        } catch(e2){ partes.push('boundingBox crudo: ERROR ' + errMsg(e2)); }
+      }
       if (raizActual && typeof raizActual === 'object'){
         partes.push('getObjectProperties raíz: ' + Object.keys(raizActual).join(', '));
         var mm = metaActual || {};
