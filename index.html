@@ -118,7 +118,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v16';
+  var VERSION = 'v17';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -628,6 +628,17 @@
     };
   }
 
+  function posFinDe(m){
+    var p = m && (m.end || m.endPoint);
+    if (!p || typeof p !== 'object') return null;
+    var x = p.positionX !== undefined ? p.positionX : p.x;
+    var y = p.positionY !== undefined ? p.positionY : p.y;
+    var z = p.positionZ !== undefined ? p.positionZ : p.z;
+    if (x === undefined || x === null) return null;
+    var r = function(n){ return typeof n === 'number' ? Math.round(n * 1000) / 1000 : n; };
+    return r(x) + ', ' + r(y) + ', ' + r(z);
+  }
+
   function posDe(m){
     var p = m && (m.start || m.startPoint || m.position || m);
     if (!p || typeof p !== 'object') return null;
@@ -784,7 +795,8 @@
     // aparecera aqui y podremos anclar la etiqueta en la superficie pinchada.
     try {
       var d = JSON.stringify(data);
-      if (d && d.length > 260) d = d.slice(0, 260) + '…';
+      var tope = /markup/i.test(String(ev)) ? 700 : 260;
+      if (d && d.length > tope) d = d.slice(0, tope) + '…';
       eventosDetalle.push(ev + ' → ' + d);
     } catch(err){ eventosDetalle.push(ev + ' → (no serializable)'); }
     if (eventosDetalle.length > 10) eventosDetalle.shift();
@@ -907,11 +919,14 @@
         partes.push('Total guardados: ' + guardados.length);
         partes.push('Claves del markup: ' + Object.keys(ult).join(', '));
         var lista = guardados.slice(-12), posSet = {}, nd = 0;
-        partes.push('Posiciones guardadas (texto -> x,y,z):');
+        partes.push('Guardadas (start = ancla, end = texto):');
         for (var i = 0; i < lista.length; i++){
           var p = posDe(lista[i]);
+          var pf = posFinDe(lista[i]);
           if (p !== null && !posSet[p]){ posSet[p] = 1; nd++; }
-          partes.push('  "' + String(lista[i].text).replace(/\n/g, ' | ') + '" -> ' + (p === null ? '(ilegible)' : p));
+          partes.push('  "' + String(lista[i].text).replace(/\n/g, ' | ') + '"');
+          partes.push('     start: ' + (p === null ? '(ilegible)' : p));
+          partes.push('     end:   ' + (pf === null ? '(ilegible)' : pf));
         }
         partes.push(nd + ' posiciones distintas de ' + lista.length + ' etiquetas.');
       }
