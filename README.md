@@ -74,8 +74,18 @@ El ancla (`start`) es el punto donde el usuario pincha, que llega en `viewer.onP
 Dos campos son imprescindibles y ninguno aparece al releer el markup:
 
 - `type: 'point'` — sin él el visor no reconoce el punto.
-- `modelId` y `objectId` — le dicen al visor a qué objeto pertenece la coordenada. Sin ellos
-  resuelve el punto en el origen del proyecto, aunque las coordenadas sean correctas.
+- `modelId` y `objectId` — le dicen al visor a qué objeto pertenece la coordenada.
+
+### Unidades
+
+La geometría del visor (`getObjectBoundingBoxes`, `viewer.onPicked`) llega en **metros**,
+pero la API de markup espera **milímetros**. Al enviar metros, un punto a 0,45 m del origen se
+interpreta como 0,45 mm y la etiqueta aparece pegada al 0,0,0 del proyecto — pinches donde
+pinches, porque todo el modelo cabe en unos milímetros alrededor del origen.
+
+El selector de la cabecera permite cambiar el factor (×1000 por defecto) por si algún modelo
+usa otra unidad. El estado muestra siempre la coordenada en metros y el valor realmente
+enviado.
 
 ### Verificación de lo creado
 
@@ -100,7 +110,7 @@ Trimble Connect → **Extensiones** → **Añadir extensión personalizada**, y 
 https://ingenierodeivisrodriguez-web.github.io/trimble-markup-ext/manifest.json
 ```
 
-La cabecera del panel muestra la versión (`v18`). Si no coincide con la última, recarga con
+La cabecera del panel muestra la versión (`v19`). Si no coincide con la última, recarga con
 Ctrl+F5: el navegador está sirviendo una copia cacheada.
 
 ## Archivos

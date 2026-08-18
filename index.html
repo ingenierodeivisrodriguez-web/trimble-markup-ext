@@ -71,11 +71,15 @@
         <input type="color" id="color" value="#00d4aa" title="Color de letra">
       </div>
       <div style="font-size:10px;color:var(--m);line-height:1.35">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:4px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:5px">
           <input type="checkbox" id="sinGuia" style="margin:0;accent-color:var(--a)">
           <span>Texto justo en el punto (sin línea guía)</span>
         </label>
-        El tamaño de letra lo fija el visor.
+        <select id="unidades" style="width:100%;background:var(--bg);border:1px solid var(--b);border-radius:5px;color:var(--t);padding:5px 7px;font-family:inherit;font-size:11px;outline:none;cursor:pointer">
+          <option value="1000">Markup en milímetros (×1000)</option>
+          <option value="1">Markup en metros (×1)</option>
+          <option value="100">Markup en centímetros (×100)</option>
+        </select>
       </div>
     </div>
   </div>
@@ -118,7 +122,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v18';
+  var VERSION = 'v19';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -142,7 +146,7 @@
   var $ = function(id){ return document.getElementById(id); };
   var dot = $('dot'), cnt = $('cnt'), sd = $('sd'), btnC = $('btnC'),
       propsBox = $('props'), prev = $('prev'), status = $('status'),
-      inpColor = $('color'), inpSinGuia = $('sinGuia');
+      inpColor = $('color'), inpSinGuia = $('sinGuia'), selUnid = $('unidades');
 
   function setStatus(msg, type){
     status.textContent = msg;
@@ -154,7 +158,8 @@
   function guardarCfg(){
     try {
       localStorage.setItem(LS, JSON.stringify({
-        color: inpColor.value, sinGuia: inpSinGuia.checked, elegidos: elegidos, extras: extras
+        color: inpColor.value, sinGuia: inpSinGuia.checked, unidades: selUnid.value,
+        elegidos: elegidos, extras: extras
       }));
     } catch(e){}
   }
@@ -163,6 +168,7 @@
       var c = JSON.parse(localStorage.getItem(LS) || '{}');
       if (c.color) inpColor.value = c.color;
       if (c.sinGuia) inpSinGuia.checked = true;
+      if (c.unidades) selUnid.value = c.unidades;
       if (Array.isArray(c.elegidos)) elegidos = c.elegidos;
       if (Array.isArray(c.extras)) extras = c.extras;
     } catch(e){}
@@ -617,10 +623,20 @@
   // releido no los devolvia, pero que no se devuelvan al leer no significa que
   // no hagan falta al escribir: sin ellos el visor resuelve el punto en el
   // origen del proyecto.
+  // La geometria del visor (bounding boxes, onPicked) viene en metros, pero la
+  // API de markup no tiene por que usar la misma unidad: si espera milimetros y
+  // le enviamos metros, cualquier punto del modelo cae a menos de un centimetro
+  // del origen y todas las etiquetas parecen estar en el 0,0,0.
+  function factorUnidad(){
+    var f = parseFloat(selUnid.value);
+    return (isFinite(f) && f > 0) ? f : 1;
+  }
+
   function pick(x, y, z, modelId, objectId){
+    var f = factorUnidad();
     return {
       type: 'point',
-      positionX: x, positionY: y, positionZ: z,
+      positionX: x * f, positionY: y * f, positionZ: z * f,
       modelId: modelId, objectId: objectId
     };
   }
@@ -706,7 +722,12 @@
           c.topZ = ultimoPick.z;
           conPick++; fuente = 'clic';
         }
-        if (!anclaInfo) anclaInfo = fmtCoord(c) + ' (' + fuente + ')';
+        if (!anclaInfo){
+          var fu = factorUnidad();
+          anclaInfo = fmtCoord(c) + ' m (' + fuente + ')';
+          if (fu !== 1) anclaInfo += ' → enviado ×' + fu + ': ' +
+            Math.round(c.x * fu) + ', ' + Math.round(c.y * fu) + ', ' + Math.round(c.z * fu);
+        }
         var entries = [];
         try { entries = await readEntries(obj.modelId, obj.rid); } catch(e){ entries = []; }
         var lineas = lineasDe(entries, obj, c, entries.meta);
@@ -847,6 +868,7 @@
   // -- Eventos ------------------------------------------------------
   inpColor.addEventListener('change', function(){ guardarCfg(); });
   inpSinGuia.addEventListener('change', function(){ guardarCfg(); });
+  selUnid.addEventListener('change', function(){ guardarCfg(); });
 
   $('btnAdd').addEventListener('click', function(){
     var v = $('custom').value.trim();
