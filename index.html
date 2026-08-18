@@ -65,13 +65,14 @@
   </div>
 
   <div>
-    <div class="lbl">Configuración del texto</div>
+    <div class="lbl">Color del texto</div>
     <div class="cfg">
-      <div>
-        <input type="number" id="size" min="6" max="96" step="1" value="16" title="Tamaño de letra">
-      </div>
       <div class="cfg-color">
         <input type="color" id="color" value="#00d4aa" title="Color de letra">
+      </div>
+      <div style="font-size:10px;color:var(--m);line-height:1.35">
+        El tamaño de letra lo fija el visor: los text markups de Trimble no
+        guardan tamaño propio.
       </div>
     </div>
   </div>
@@ -114,8 +115,8 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v10';
-  var ID_OPT = '__id__';
+  var VERSION = 'v11';
+  var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var LS = 'creadorEtiquetas.cfg';
 
   var API = null, sel = [], autoOn = true, lastIds = '', selTimer = null, running = false;
@@ -123,6 +124,7 @@
   var pollTimer = null;      // sondeo periodico de la seleccion
   var eventos = [];          // nombres de eventos recibidos, para diagnostico
   var ultimaSelCruda = null; // ultimo getSelection() sin procesar
+  var centroActual = null;   // centro de la pieza mostrada en el panel
   var available = [];        // parametros reales de la pieza seleccionada
   var elegidos = [];         // parametros marcados por el usuario (persisten)
   var extras = [];           // parametros anadidos a mano por nombre exacto
@@ -131,7 +133,7 @@
   var $ = function(id){ return document.getElementById(id); };
   var dot = $('dot'), cnt = $('cnt'), sd = $('sd'), btnC = $('btnC'),
       propsBox = $('props'), prev = $('prev'), status = $('status'),
-      inpSize = $('size'), inpColor = $('color');
+      inpColor = $('color');
 
   function setStatus(msg, type){
     status.textContent = msg;
@@ -143,14 +145,13 @@
   function guardarCfg(){
     try {
       localStorage.setItem(LS, JSON.stringify({
-        size: inpSize.value, color: inpColor.value, elegidos: elegidos, extras: extras
+        color: inpColor.value, elegidos: elegidos, extras: extras
       }));
     } catch(e){}
   }
   function cargarCfg(){
     try {
       var c = JSON.parse(localStorage.getItem(LS) || '{}');
-      if (c.size) inpSize.value = c.size;
       if (c.color) inpColor.value = c.color;
       if (Array.isArray(c.elegidos)) elegidos = c.elegidos;
       if (Array.isArray(c.extras)) extras = c.extras;
@@ -167,9 +168,12 @@
       a: 255
     };
   }
-  function tamano(){
-    var n = parseInt(inpSize.value, 10);
-    return (isFinite(n) && n > 0) ? n : null;
+
+  // Punto unico de la pieza, tal y como se escribe en la etiqueta.
+  function fmtCoord(c){
+    if (!c) return null;
+    var r = function(n){ return Math.round(n * 1000) / 1000; };
+    return r(c.x) + ", " + r(c.y) + ", " + r(c.z);
   }
 
   // -- Interfaz ----------------------------------------------------
@@ -196,7 +200,10 @@
   function pintarProps(){
     propsBox.innerHTML = '';
 
-    var filas = [{ set: 'General', name: 'ID (objectRuntimeId)', qualified: ID_OPT, value: sel.length ? sel[0].rid : null }];
+    var filas = [
+      { set: 'General', name: 'ID (objectRuntimeId)', qualified: ID_OPT, value: sel.length ? sel[0].rid : null },
+      { set: 'General', name: 'Punto único (X, Y, Z)', qualified: CENTRO_OPT, value: fmtCoord(centroActual) }
+    ];
     var i;
     for (i = 0; i < available.length; i++) filas.push(available[i]);
     // Un parametro anadido a mano que ya esta en la lista no se repite.
@@ -236,7 +243,9 @@
           nom.textContent = f.name;
           var val = document.createElement('span');
           val.className = 'pr-v';
-          var v = f.qualified === ID_OPT ? (f.value == null ? '' : String(f.value)) : fmtVal(f.value);
+          var v = (f.qualified === ID_OPT || f.qualified === CENTRO_OPT)
+            ? (f.value == null ? '' : String(f.value))
+            : fmtVal(f.value);
           val.textContent = v === null ? '' : v;
           fila.appendChild(chk); fila.appendChild(nom); fila.appendChild(val);
           propsBox.appendChild(fila);
@@ -255,8 +264,8 @@
   }
 
   // Texto de la etiqueta, en el orden en que aparecen los parametros.
-  function lineasDe(entries, obj){
-    var orden = [ID_OPT];
+  function lineasDe(entries, obj, centro){
+    var orden = [ID_OPT, CENTRO_OPT];
     var i;
     for (i = 0; i < available.length; i++) orden.push(available[i].qualified);
     for (i = 0; i < extras.length; i++) orden.push(extras[i]);
@@ -273,6 +282,7 @@
       if (usados[corta]) continue;
       usados[corta] = 1;
       if (q === ID_OPT){ lineas.push(String(obj.rid)); continue; }
+      if (q === CENTRO_OPT){ var fc = fmtCoord(centro); if (fc) lineas.push(fc); continue; }
       var v = matchValue(entries, q);
       if (v !== null) lineas.push(v);
     }
@@ -282,7 +292,7 @@
   function updPrev(){
     if (!sel.length){ prev.textContent = '—'; return; }
     if (!elegidos.length){ prev.textContent = 'Marca al menos un parámetro.'; return; }
-    var l = lineasDe(available, sel[0]);
+    var l = lineasDe(available, sel[0], centroActual);
     prev.textContent = l.length ? l.join('\n') : '(la pieza no tiene esos parámetros)';
   }
 
@@ -422,10 +432,13 @@
 
   async function loadProps(anunciar){
     if (!API || !sel.length){
-      available = [];
+      available = []; centroActual = null;
       pintarProps(); updPrev();
       return;
     }
+    // El punto unico de la pieza, para poder mostrarlo y ofrecerlo como parametro.
+    try { centroActual = await readCenter(sel[0].modelId, sel[0].rid); }
+    catch(e){ centroActual = null; }
     try {
       available = await readEntries(sel[0].modelId, sel[0].rid);
       pintarProps(); updPrev();
@@ -498,24 +511,15 @@
     return { type: 'point', positionX: x, positionY: y, positionZ: z };
   }
 
+  // La etiqueta se ancla en el centro de la pieza: start y end son el mismo
+  // punto, para que el texto salga justo ahi y no desplazado.
   function construirMarkup(texto, c){
-    var m = {
+    return {
       text: texto,
       color: colorRGBA(),
       start: pick(c.x, c.y, c.z),
-      end:   pick(c.x, c.y, c.topZ + c.sep)
+      end:   pick(c.x, c.y, c.z)
     };
-    var t = tamano();
-    // El tamano de letra no aparece en el markup que devuelve el host, asi que
-    // se envia en los dos nombres plausibles; si los ignora, lo avisamos.
-    if (t){ m.size = t; m.fontSize = t; }
-    return m;
-  }
-
-  function sinTamano(m){
-    var o = {};
-    for (var k in m) if (k !== 'size' && k !== 'fontSize') o[k] = m[k];
-    return o;
   }
 
   function posDe(m){
@@ -551,13 +555,13 @@
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
       try {
-        // Cada pieza lee SUS parametros y SU caja.
+        // Cada pieza lee SUS parametros y SU caja. El centro primero, porque
+        // puede formar parte del propio texto de la etiqueta.
+        var c = await readCenter(obj.modelId, obj.rid);
         var entries = [];
         try { entries = await readEntries(obj.modelId, obj.rid); } catch(e){ entries = []; }
-        var lineas = lineasDe(entries, obj);
+        var lineas = lineasDe(entries, obj, c);
         if (!lineas.length){ lineas = ['ID: ' + obj.rid]; sinDatos++; }
-
-        var c = await readCenter(obj.modelId, obj.rid);
         var clave = c.x + '|' + c.y + '|' + c.z;
         if (centros[clave]) repetidas++; else centros[clave] = 1;
 
@@ -576,11 +580,7 @@
         ultimoError = errMsg(e);
         for (var k = 0; k < markups.length; k++){
           try { await mk.addTextMarkup([markups[k]]); ok++; }
-          catch(e2){
-            // Por si el host rechaza los campos de tamano.
-            try { await mk.addTextMarkup([sinTamano(markups[k])]); ok++; }
-            catch(e3){ errEnvio++; ultimoError = errMsg(e3); }
-          }
+          catch(e2){ errEnvio++; ultimoError = errMsg(e2); }
         }
       }
     }
@@ -590,7 +590,7 @@
     var despues = guardados === null ? null : guardados.length;
     var reales = (antes !== null && despues !== null) ? (despues - antes) : null;
 
-    var avisoPos = '', avisoTam = '';
+    var avisoPos = '';
     if (guardados && guardados.length && markups.length){
       var nuestros = guardados.slice(-markups.length), k2;
       for (k2 = 0; k2 < nuestros.length; k2++){
@@ -608,10 +608,6 @@
           : '\n⚠ no se pudo leer la posición guardada.';
         avisoPos += '\nPulsa «Diagnóstico de markup» y envía el volcado.';
       }
-      var u = nuestros[nuestros.length - 1];
-      if (tamano() && u && u.size === undefined && u.fontSize === undefined){
-        avisoTam = '\nNota: el visor no guardó el tamaño de letra (no lo admite en text markups).';
-      }
     }
 
     var fallos = errPrep + errEnvio;
@@ -620,7 +616,7 @@
       : ok + ' enviadas, ' + fallos + ' fallo(s)';
     if (sinDatos) msg += ' · ' + sinDatos + ' sin esos parámetros (se usó el ID)';
     if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición';
-    msg += avisoPos + avisoTam;
+    msg += avisoPos;
     if (ultimoError) msg += '\n' + ultimoError;
 
     var mal = fallos > 0 || repetidas > 0 || avisoPos !== '';
@@ -677,7 +673,6 @@
   }
 
   // -- Eventos ------------------------------------------------------
-  inpSize.addEventListener('change', function(){ guardarCfg(); });
   inpColor.addEventListener('change', function(){ guardarCfg(); });
 
   $('btnAdd').addEventListener('click', function(){
