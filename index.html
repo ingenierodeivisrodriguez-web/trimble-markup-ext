@@ -71,8 +71,11 @@
         <input type="color" id="color" value="#00d4aa" title="Color de letra">
       </div>
       <div style="font-size:10px;color:var(--m);line-height:1.35">
-        El tamaño de letra lo fija el visor: los text markups de Trimble no
-        guardan tamaño propio.
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:4px">
+          <input type="checkbox" id="sinGuia" style="margin:0;accent-color:var(--a)">
+          <span>Texto justo en el punto (sin línea guía)</span>
+        </label>
+        El tamaño de letra lo fija el visor.
       </div>
     </div>
   </div>
@@ -115,7 +118,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v15';
+  var VERSION = 'v16';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -139,7 +142,7 @@
   var $ = function(id){ return document.getElementById(id); };
   var dot = $('dot'), cnt = $('cnt'), sd = $('sd'), btnC = $('btnC'),
       propsBox = $('props'), prev = $('prev'), status = $('status'),
-      inpColor = $('color');
+      inpColor = $('color'), inpSinGuia = $('sinGuia');
 
   function setStatus(msg, type){
     status.textContent = msg;
@@ -151,7 +154,7 @@
   function guardarCfg(){
     try {
       localStorage.setItem(LS, JSON.stringify({
-        color: inpColor.value, elegidos: elegidos, extras: extras
+        color: inpColor.value, sinGuia: inpSinGuia.checked, elegidos: elegidos, extras: extras
       }));
     } catch(e){}
   }
@@ -159,6 +162,7 @@
     try {
       var c = JSON.parse(localStorage.getItem(LS) || '{}');
       if (c.color) inpColor.value = c.color;
+      if (c.sinGuia) inpSinGuia.checked = true;
       if (Array.isArray(c.elegidos)) elegidos = c.elegidos;
       if (Array.isArray(c.extras)) extras = c.extras;
     } catch(e){}
@@ -620,7 +624,7 @@
       text: texto,
       color: colorRGBA(),
       start: pick(c.x, c.y, c.z),
-      end:   pick(c.x, c.y, c.topZ + c.sep)
+      end:   inpSinGuia.checked ? pick(c.x, c.y, c.z) : pick(c.x, c.y, c.topZ + c.sep)
     };
   }
 
@@ -664,7 +668,7 @@
     var antesArr = await leerMarkups(mk);
     var antes = antesArr === null ? null : antesArr.length;
 
-    var markups = [], duenos = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0, conPick = 0;
+    var markups = [], duenos = [], errPrep = 0, sinDatos = 0, centros = {}, repetidas = 0, conPick = 0, anclaInfo = '';
 
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
@@ -674,11 +678,13 @@
         var c = await readCenter(obj.modelId, obj.rid);
         // Si el visor nos dio el punto exacto del clic sobre esta pieza, ese
         // manda: viene ya en el espacio correcto y pertenece al elemento.
+        var fuente = 'caja';
         if (ultimoPick && (ultimoPick.rid == null || String(ultimoPick.rid) === String(obj.rid))){
           c.x = ultimoPick.x; c.y = ultimoPick.y; c.z = ultimoPick.z;
           c.topZ = ultimoPick.z;
-          conPick++;
+          conPick++; fuente = 'clic';
         }
+        if (!anclaInfo) anclaInfo = fmtCoord(c) + ' (' + fuente + ')';
         var entries = [];
         try { entries = await readEntries(obj.modelId, obj.rid); } catch(e){ entries = []; }
         var lineas = lineasDe(entries, obj, c, entries.meta);
@@ -739,8 +745,9 @@
     var msg = (reales !== null)
       ? reales + ' de ' + sel.length + ' etiquetas creadas'
       : ok + ' enviadas, ' + fallos + ' fallo(s)';
-    if (conPick) msg += ' · ' + conPick + ' ancladas en el punto del clic';
-    else if (markups.length) msg += ' · ancladas por bounding box (sin punto de clic)';
+    if (anclaInfo) msg += '\nAncla usada: ' + anclaInfo;
+    if (conPick) msg += ' · ' + conPick + '/' + markups.length + ' por clic';
+    else if (markups.length) msg += ' · sin punto de clic disponible';
     if (sinDatos) msg += ' · ' + sinDatos + ' sin esos parámetros (se usó el ID)';
     if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición';
     msg += avisoPos;
@@ -816,6 +823,7 @@
 
   // -- Eventos ------------------------------------------------------
   inpColor.addEventListener('change', function(){ guardarCfg(); });
+  inpSinGuia.addEventListener('change', function(){ guardarCfg(); });
 
   $('btnAdd').addEventListener('click', function(){
     var v = $('custom').value.trim();
