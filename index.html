@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creador de Etiquetas</title>
+<script src="https://components.connect.trimble.com/trimble-connect-workspace-api/index.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#0f1117;--s:#1a1d27;--b:#2a2d3a;--a:#00d4aa;--t:#e2e4ed;--m:#666a80;--err:#ff4757;--warn:#ffa726}
+  html,body{height:100%;background:var(--bg);color:var(--t);font-family:'IBM Plex Sans',sans-serif;font-size:13px;overflow:hidden}
+  .app{display:flex;flex-direction:column;height:100vh;padding:12px;gap:10px}
+  .hdr{display:flex;align-items:center;gap:8px;padding-bottom:10px;border-bottom:1px solid var(--b)}
+  .hdr-ico{width:28px;height:28px;background:var(--a);border-radius:6px;display:flex;align-items:center;justify-content:center}
+  .hdr-ico svg{width:16px;height:16px;fill:var(--bg)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--m);margin-left:auto;transition:background .3s}
+  .dot.ok{background:var(--a);box-shadow:0 0 6px var(--a)}.dot.err{background:var(--err)}
+  .lbl{font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--m);margin-bottom:5px}
+  input,select{width:100%;background:var(--s);border:1px solid var(--b);border-radius:6px;color:var(--t);padding:7px 10px;font-family:inherit;font-size:12px;outline:none}
+  input:focus,select:focus{border-color:var(--a)}input::placeholder{color:var(--m)}
+  select{cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--m) 50%),linear-gradient(135deg,var(--m) 50%,transparent 50%);background-position:calc(100% - 14px) 50%,calc(100% - 9px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:26px}
+  select option{background:var(--s);color:var(--t)}
+  .hint{font-size:10px;color:var(--m);margin-top:4px;font-family:'IBM Plex Mono',monospace;word-break:break-all}
+  .sel-box{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px}
+  .cnt{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:500;color:var(--a);min-width:30px}
+  .cnt.z{color:var(--m)}.sl{font-size:11px;color:var(--m)}.sd{font-size:11px;color:var(--t);font-family:'IBM Plex Mono',monospace}
+  .btn{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border-radius:6px;border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:500;transition:all .15s}
+  .btn-p{background:var(--a);color:var(--bg);width:100%}.btn-p:hover{background:#00efc0;transform:translateY(-1px)}
+  .btn-p:disabled{background:var(--b);color:var(--m);cursor:not-allowed;transform:none}
+  .btn-s{background:var(--s);color:var(--t);border:1px solid var(--b);flex:1}.btn-s:hover{border-color:var(--a);color:var(--a)}
+  .btn-d{background:transparent;color:var(--err);border:1px solid var(--err);flex:1}.btn-d:hover{background:var(--err);color:#fff}
+  .log{flex:1;background:var(--s);border:1px solid var(--b);border-radius:8px;overflow-y:auto;padding:8px;min-height:60px;font-family:'IBM Plex Mono',monospace;font-size:10px}
+  .le{display:flex;gap:6px;padding:2px 4px;border-radius:3px;line-height:1.5}
+  .lt{color:var(--m);flex-shrink:0}.lok{color:var(--a)}.lerr{color:var(--err)}.linf{color:var(--warn)}.lm{color:var(--t);word-break:break-all}
+  .empty{color:var(--m);padding:8px}
+  .row{display:flex;gap:6px}
+  .auto-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--s);border:1px solid var(--b);border-radius:6px}
+  .tog{position:relative;width:32px;height:18px;flex-shrink:0}
+  .tog input{display:none}.tog-t{position:absolute;inset:0;background:var(--b);border-radius:9px;cursor:pointer;transition:background .2s}
+  .tog input:checked+.tog-t{background:var(--a)}.tog-th{position:absolute;top:2px;left:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:transform .2s;pointer-events:none}
+  .tog input:checked~.tog-th{transform:translateX(14px)}
+  .badge{font-size:9px;background:var(--a);color:var(--bg);padding:1px 5px;border-radius:3px;display:none;animation:pulse 1.5s infinite}
+  .badge.on{display:block}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  hr{border:none;border-top:1px solid var(--b)}
+  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--b);border-radius:2px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="hdr">
+    <div class="hdr-ico"><svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm0 8h2v-2H3v2zm0 8h2v-2H3v2zm4-4h14v-2H7v2zm0-8v2h14V9H7zm0-6v2h14V3H7z"/></svg></div>
+    <div><div style="font-weight:500;font-size:13px">Creador de Etiquetas</div><div style="font-size:10px;color:var(--m);font-family:'IBM Plex Mono',monospace">Extensión de Trimble Connect</div></div>
+    <div class="dot" id="dot"></div>
+  </div>
+
+  <div>
+    <div class="lbl">Propiedad IFC</div>
+    <select id="preset">
+      <option value="name">Nombre</option>
+      <option value="area">Área</option>
+      <option value="volume">Volumen</option>
+      <option value="id">ID</option>
+      <option value="level">Nivel</option>
+      <option value="material">Material</option>
+      <option value="custom">Personalizada…</option>
+    </select>
+    <input id="prop" placeholder="Nombre exacto de la propiedad IFC…" style="display:none;margin-top:6px">
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div><div class="lbl">Selección actual</div>
+    <div class="sel-box">
+      <div class="cnt z" id="cnt">0</div>
+      <div><div class="sl">objetos seleccionados</div><div class="sd" id="sd">—</div></div>
+    </div>
+  </div>
+
+  <div class="auto-row">
+    <label class="tog"><input type="checkbox" id="auto"><div class="tog-t"></div><div class="tog-th"></div></label>
+    <span style="font-size:11px;flex:1">Modo automático</span>
+    <span class="badge" id="badge">ACTIVO</span>
+  </div>
+
+  <button class="btn btn-p" id="btnC" disabled>Crear etiquetas</button>
+  <hr>
+  <div class="lbl">Registro de actividad</div>
+  <div class="log" id="log"><div class="empty">Esperando acciones…</div></div>
+  <div class="row">
+    <button class="btn btn-s" id="btnR">↻ Actualizar</button>
+    <button class="btn btn-d" id="btnCl">✕ Limpiar</button>
+  </div>
+</div>
+<script>
+(function(){
+  'use strict';
+
+  // Nombres candidatos por preset. El nombre exacto varía según el modelo/exportador
+  // IFC, por eso cada preset prueba varias variantes (sin distinguir mayúsculas).
+  var PRESETS = {
+    name:     { label: 'Nombre',   candidates: ['Name'] },
+    area:     { label: 'Área',     candidates: ['Area', 'Net Area', 'NetArea', 'Gross Area', 'GrossArea'] },
+    volume:   { label: 'Volumen',  candidates: ['Volume', 'Net Volume', 'NetVolume', 'Gross Volume', 'GrossVolume'] },
+    id:       { label: 'ID',       candidates: [] },
+    level:    { label: 'Nivel',    candidates: ['Level', 'Building Storey', 'BuildingStorey'] },
+    material: { label: 'Material', candidates: ['Material'] }
+  };
+
+  var API = null, sel = [], autoOn = false, lastIds = '', autoTimer = null, running = false;
+
+  var $ = function(id){ return document.getElementById(id); };
+  var dot = $('dot'), cnt = $('cnt'), sd = $('sd'), btnC = $('btnC'), log = $('log'),
+      preset = $('preset'), prop = $('prop'), hint = $('hint');
+
+  // -- Registro ----------------------------------------------------
+  function addLog(msg, type){
+    var empty = log.querySelector('.empty');
+    if (empty) empty.remove();
+    var t = new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    var sym = type === 'ok' ? '✓' : type === 'e' ? '✗' : '→';
+    var cls = type === 'ok' ? 'lok' : type === 'e' ? 'lerr' : 'linf';
+    var d = document.createElement('div');
+    d.className = 'le';
+    var st = document.createElement('span'); st.className = 'lt'; st.textContent = t;
+    var ss = document.createElement('span'); ss.className = cls; ss.textContent = sym;
+    var sm = document.createElement('span'); sm.className = 'lm'; sm.textContent = String(msg);
+    d.appendChild(st); d.appendChild(ss); d.appendChild(sm);
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+  function errMsg(e){ return (e && e.message) ? e.message : String(e); }
+
+  // -- Interfaz ----------------------------------------------------
+  function updUI(){
+    var n = sel.length;
+    cnt.textContent = n;
+    cnt.className = 'cnt' + (n === 0 ? ' z' : '');
+    btnC.disabled = n === 0 || !API || running;
+    sd.textContent = n === 0 ? '—' : n === 1 ? '1 objeto' : n + ' objetos';
+  }
+
+  function updHint(){
+    var key = preset.value;
+    if (key === 'custom'){
+      prop.style.display = '';
+      hint.textContent = 'Se buscará exactamente ese nombre de propiedad.';
+      return;
+    }
+    prop.style.display = 'none';
+    if (key === 'id'){
+      hint.textContent = 'Se usa directamente el objectRuntimeId.';
+      return;
+    }
+    hint.textContent = 'Candidatos: ' + PRESETS[key].candidates.join(', ');
+  }
+
+  // Lista de nombres candidatos según el selector.
+  function activeCandidates(){
+    var key = preset.value;
+    if (key === 'custom'){
+      var v = prop.value.trim();
+      return v ? [v] : [];
+    }
+    return PRESETS[key] ? PRESETS[key].candidates.slice() : [];
+  }
+
+  function activeLabel(){
+    var key = preset.value;
+    if (key === 'custom') return prop.value.trim() || '(vacío)';
+    return PRESETS[key] ? PRESETS[key].label : key;
+  }
+
+  // -- Selección ---------------------------------------------------
+  function parseSel(data){
+    var out = [];
+    var items = data || [];
+    if (!Array.isArray(items)) items = [items];
+    for (var i = 0; i < items.length; i++){
+      var item = items[i];
+      if (!item) continue;
+      var ids = item.objectRuntimeIds || (item.objectRuntimeId != null ? [item.objectRuntimeId] : []);
+      for (var j = 0; j < ids.length; j++){
+        out.push({ modelId: item.modelId, rid: ids[j] });
+      }
+    }
+    return out;
+  }
+
+  async function refreshSelection(silent){
+    if (!API) { addLog('Sin conexión con Trimble Connect.', 'e'); return; }
+    try {
+      var s = await API.viewer.getSelection();
+      sel = parseSel(s);
+      updUI();
+      if (!silent) addLog('Selección: ' + sel.length + ' objeto(s).', 'ok');
+    } catch(e){
+      addLog('Error al leer la selección: ' + errMsg(e), 'e');
+    }
+  }
+
+  // -- Lectura de propiedades --------------------------------------
+  // Aplana la respuesta de getObjectProperties en entradas {set, name, value}.
+  function flatten(node, setName, out, depth){
+    if (node == null || depth > 8) return;
+    if (Array.isArray(node)){
+      for (var i = 0; i < node.length; i++) flatten(node[i], setName, out, depth + 1);
+      return;
+    }
+    if (typeof node !== 'object') return;
+    var nm = typeof node.name === 'string' ? node.name : null;
+    var isContainer = false;
+    if (Array.isArray(node.properties)){ isContainer = true; flatten(node.properties, nm || setName, out, depth + 1); }
+    if (Array.isArray(node.propertySets)){ isContainer = true; flatten(node.propertySets, nm || setName, out, depth + 1); }
+    if (Array.isArray(node.attributes)){ isContainer = true; flatten(node.attributes, nm || setName, out, depth + 1); }
+    if (nm && !isContainer && ('value' in node || 'displayValue' in node || 'nominalValue' in node)){
+      var v = node.displayValue != null ? node.displayValue
+            : node.value != null ? node.value
+            : node.nominalValue;
+      out.push({ set: setName, name: nm, value: v });
+    }
+  }
+
+  function fmtVal(v){
+    if (v == null) return null;
+    if (typeof v === 'object'){
+      if ('value' in v) return fmtVal(v.value);
+      if ('displayValue' in v) return fmtVal(v.displayValue);
+      return null;
+    }
+    if (typeof v === 'number'){
+      if (!isFinite(v)) return null;
+      return String(Math.round(v * 1000) / 1000);
+    }
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    var s = String(v).trim();
+    return s.length ? s : null;
+  }
+
+  // Busca el primer candidato presente, comparando "Propiedad" y "Pset/Propiedad".
+  function findValue(entries, candidates){
+    for (var c = 0; c < candidates.length; c++){
+      var cand = candidates[c].toLowerCase();
+      for (var i = 0; i < entries.length; i++){
+        var e = entries[i];
+        var n = String(e.name || '').toLowerCase();
+        var q = (e.set ? String(e.set) + '/' : '').toLowerCase() + n;
+        if (n === cand || q === cand){
+          var v = fmtVal(e.value);
+          if (v !== null) return v;
+        }
+      }
+    }
+    return null;
+  }
+
+  async function readLabel(modelId, rid, candidates){
+    if (preset.value === 'id') return String(rid);
+    if (!candidates.length) return null;
+    var props = await API.viewer.getObjectProperties(modelId, [rid]);
+    var entries = [];
+    flatten(props, null, entries, 0);
+    return findValue(entries, candidates);
+  }
+
+  // -- Posición 3D: centro del bounding box ------------------------
+  function num(v){ return typeof v === 'number' ? v : Number(v); }
+
+  async function readCenter(modelId, rid){
+    var boxes = await API.viewer.getObjectBoundingBoxes(modelId, [rid]);
+    var arr = Array.isArray(boxes) ? boxes : [boxes];
+    var entry = null;
+    for (var i = 0; i < arr.length; i++){
+      if (arr[i] && (arr[i].id === rid || arr[i].objectRuntimeId === rid)){ entry = arr[i]; break; }
+    }
+    if (!entry) entry = arr[0];
+    if (!entry) throw new Error('sin bounding box');
+    var bb = entry.boundingBox || entry.bbox || entry;
+    var min = bb && bb.min, max = bb && bb.max;
+    if (!min || !max) throw new Error('bounding box sin min/max');
+    var c = {
+      x: (num(min.x) + num(max.x)) / 2,
+      y: (num(min.y) + num(max.y)) / 2,
+      z: (num(min.z) + num(max.z)) / 2
+    };
+    if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.z)) throw new Error('coordenadas no numéricas');
+    return c;
+  }
+
+  function markupApi(){
+    if (API && API.markup && typeof API.markup.addTextMarkup === 'function') return API.markup;
+    if (API && API.viewer && API.viewer.markup && typeof API.viewer.markup.addTextMarkup === 'function') return API.viewer.markup;
+    return null;
+  }
+
+  // -- Creación de etiquetas ---------------------------------------
+  async function doCreate(){
+    if (!API || sel.length === 0 || running) return;
+
+    var candidates = activeCandidates();
+    if (preset.value === 'custom' && candidates.length === 0){
+      addLog('Escribe el nombre de la propiedad personalizada.', 'e');
+      return;
+    }
+
+    var mk = markupApi();
+    if (!mk){
+      addLog('API de markup no disponible: no existe API.markup.addTextMarkup. No se pueden crear etiquetas.', 'e');
+      return;
+    }
+
+    running = true;
+    updUI();
+    addLog('Creando ' + sel.length + ' etiqueta(s) - propiedad: "' + activeLabel() + '"...');
+
+    var markups = [], meta = [], fail = 0;
+
+    for (var i = 0; i < sel.length; i++){
+      var obj = sel[i];
+      try {
+        var label = null;
+        try {
+          label = await readLabel(obj.modelId, obj.rid, candidates);
+        } catch(e){
+          addLog('Propiedades no legibles (rid ' + obj.rid + '): ' + errMsg(e), 'e');
+        }
+        if (label === null || label === ''){
+          label = 'ID: ' + obj.rid;
+          if (preset.value !== 'id') addLog('Propiedad no encontrada en rid ' + obj.rid + ' - se usa "' + label + '".');
+        }
+
+        var c = await readCenter(obj.modelId, obj.rid);
+        markups.push({
+          text: label,
+          start: { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
+          end:   { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
+          color: { r: 0, g: 212, b: 170, a: 255 }
+        });
+        meta.push(label);
+      } catch(e){
+        fail++;
+        addLog('rid ' + obj.rid + ': ' + errMsg(e), 'e');
+      }
+    }
+
+    var ok = 0;
+    if (markups.length){
+      try {
+        await mk.addTextMarkup(markups);
+        ok = markups.length;
+        for (var m = 0; m < meta.length; m++) addLog('"' + meta[m] + '"', 'ok');
+      } catch(e){
+        // El lote falló: reintenta una a una para aislar cuáles funcionan.
+        addLog('Lote rechazado (' + errMsg(e) + ') - reintentando individualmente...');
+        for (var k = 0; k < markups.length; k++){
+          try {
+            await mk.addTextMarkup([markups[k]]);
+            ok++;
+            addLog('"' + meta[k] + '"', 'ok');
+          } catch(e2){
+            fail++;
+            addLog('"' + meta[k] + '": ' + errMsg(e2), 'e');
+          }
+        }
+      }
+    }
+
+    addLog('Completado: ' + ok + ' OK, ' + fail + ' fallo(s).', ok > 0 ? 'ok' : 'e');
+    running = false;
+    updUI();
+  }
+
+  // -- Conexión ----------------------------------------------------
+  function onEvent(ev, data){
+    if (ev !== 'viewer.modelObject.selection') return;
+    sel = parseSel(data);
+    updUI();
+    if (!autoOn || sel.length === 0) return;
+    var ids = sel.map(function(o){ return o.modelId + ':' + o.rid; }).join(',');
+    if (ids === lastIds) return;
+    lastIds = ids;
+    if (autoTimer) clearTimeout(autoTimer);
+    autoTimer = setTimeout(function(){ autoTimer = null; doCreate(); }, 500);
+  }
+
+  async function init(){
+    updHint();
+    addLog('Conectando con Trimble Connect...');
+    try {
+      API = await TrimbleConnectWorkspace.connect(window.parent, onEvent, 15000);
+      dot.classList.add('ok');
+      addLog('Conectado.', 'ok');
+      if (!markupApi()) addLog('Aviso: la API de markup no está disponible en este contexto.', 'e');
+      await refreshSelection(true);
+      if (sel.length) addLog(sel.length + ' objeto(s) ya seleccionados.');
+    } catch(e){
+      dot.classList.add('err');
+      addLog('Error al conectar: ' + errMsg(e), 'e');
+    }
+    updUI();
+  }
+
+  // -- Eventos de interfaz -----------------------------------------
+  preset.addEventListener('change', updHint);
+  btnC.addEventListener('click', function(){ doCreate(); });
+  $('btnR').addEventListener('click', function(){ refreshSelection(false); });
+  $('btnCl').addEventListener('click', function(){
+    log.innerHTML = '';
+    var d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = 'Esperando acciones…';
+    log.appendChild(d);
+  });
+  $('auto').addEventListener('change', function(e){
+    autoOn = e.target.checked;
+    $('badge').classList.toggle('on', autoOn);
+    lastIds = '';
+    addLog(autoOn ? 'Modo automático activado.' : 'Modo automático desactivado.');
+  });
+
+  window.addEventListener('error', function(e){
+    addLog('JS: ' + (e.message || 'error desconocido'), 'e');
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
