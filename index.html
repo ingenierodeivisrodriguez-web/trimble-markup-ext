@@ -276,10 +276,15 @@
     var arr = Array.isArray(boxes) ? boxes : [boxes];
     var entry = null;
     for (var i = 0; i < arr.length; i++){
-      if (arr[i] && (arr[i].id === rid || arr[i].objectRuntimeId === rid)){ entry = arr[i]; break; }
+      if (arr[i] && (String(arr[i].id) === String(rid) || String(arr[i].objectRuntimeId) === String(rid))){ entry = arr[i]; break; }
     }
-    if (!entry) entry = arr[0];
-    if (!entry) throw new Error('sin bounding box');
+    // Solo se da por buena la primera caja cuando la respuesta trae exactamente
+    // una. Si trae varias y ninguna coincide con el objeto pedido, coger arr[0]
+    // pondria todas las etiquetas en el mismo punto sin avisar de nada.
+    if (!entry){
+      if (arr.length === 1) entry = arr[0];
+      else throw new Error('la caja devuelta no corresponde al objeto ' + rid);
+    }
     var bb = entry.boundingBox || entry.bbox || entry;
     var min = bb && bb.min, max = bb && bb.max;
     if (!min || !max) throw new Error('bounding box sin min/max');
@@ -295,6 +300,30 @@
   function markupApi(){
     if (API && API.markup && typeof API.markup.addTextMarkup === 'function') return API.markup;
     if (API && API.viewer && API.viewer.markup && typeof API.viewer.markup.addTextMarkup === 'function') return API.viewer.markup;
+    return null;
+  }
+
+  // Identificador unico por etiqueta. Sin el, todas comparten el mismo id vacio
+  // y el visor las colapsa en una sola: cada nueva reemplaza a la anterior.
+  function uid(){
+    try {
+      if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch(e){}
+    return 'mk-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  }
+
+  // Cuenta las etiquetas que existen de verdad, para no fiarnos solo de que la
+  // llamada no lanzara error. Devuelve null si el host no expone ningun lector.
+  async function countMarkups(mk){
+    var fns = ['getMarkups', 'getTextMarkups', 'getAllMarkups'];
+    for (var i = 0; i < fns.length; i++){
+      if (typeof mk[fns[i]] === 'function'){
+        try {
+          var r = await mk[fns[i]]();
+          if (Array.isArray(r)) return r.length;
+        } catch(e){}
+      }
+    }
     return null;
   }
 
@@ -341,18 +370,21 @@
     updUI();
     setStatus('Creando ' + sel.length + ' etiqueta(s)…', 'info');
 
-    var markups = [], meta = [], fail = 0, sinProp = 0;
+    var antes = await countMarkups(mk);
+
+    var markups = [], meta = [], errPrep = 0, sinProp = 0;
+    var centros = {}, repetidas = 0;
 
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
       try {
+        // Cada vuelta lee SIEMPRE las propiedades y la caja de SU propio objeto.
         var label = null;
         if (mode === ID_OPT){
           label = String(obj.rid);
         } else {
           try {
-            var entries = (i === 0 && available.length) ? available : await readEntries(obj.modelId, obj.rid);
-            label = matchValue(entries, target);
+            label = matchValue(await readEntries(obj.modelId, obj.rid), target);
           } catch(e){
             label = null;
           }
@@ -363,7 +395,11 @@
         }
 
         var c = await readCenter(obj.modelId, obj.rid);
+        var clave = c.x + '|' + c.y + '|' + c.z;
+        if (centros[clave]) repetidas++; else centros[clave] = 1;
+
         markups.push({
+          id: uid(),
           text: label,
           start: { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
           end:   { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
@@ -371,29 +407,58 @@
         });
         meta.push(label);
       } catch(e){
-        fail++;
+        errPrep++;
       }
     }
 
-    var ok = 0, ultimoError = '';
+    var ok = 0, errEnvio = 0, ultimoError = '';
     if (markups.length){
       try {
         await mk.addTextMarkup(markups);
         ok = markups.length;
       } catch(e){
-        // El lote falló: reintenta una a una para no perder las que sí valen.
+        ultimoError = errMsg(e);
+        // El lote falló: una a una, para no perder las que sí valen.
         for (var k = 0; k < markups.length; k++){
-          try { await mk.addTextMarkup([markups[k]]); ok++; }
-          catch(e2){ fail++; ultimoError = errMsg(e2); }
+          try {
+            await mk.addTextMarkup([markups[k]]);
+            ok++;
+          } catch(e2){
+            // Ultimo recurso por si este host rechaza un id propio.
+            try {
+              var sinId = {};
+              for (var p in markups[k]) if (p !== 'id') sinId[p] = markups[k][p];
+              await mk.addTextMarkup([sinId]);
+              ok++;
+            } catch(e3){
+              errEnvio++;
+              ultimoError = errMsg(e3);
+            }
+          }
         }
       }
     }
 
-    var msg = ok + ' OK, ' + fail + ' fallo(s)';
-    if (ok === 1 && fail === 0) msg = 'Etiqueta creada: "' + meta[0] + '"';
+    // Cuenta lo que hay de verdad en el modelo, no lo que la API acepto.
+    var despues = await countMarkups(mk);
+    var reales = (antes !== null && despues !== null) ? (despues - antes) : null;
+
+    var fallos = errPrep + errEnvio;
+    var msg;
+    if (reales !== null){
+      msg = reales + ' de ' + sel.length + ' etiquetas visibles';
+      if (reales !== ok) msg += ' (la API aceptó ' + ok + ')';
+    } else if (ok === 1 && fallos === 0){
+      msg = 'Etiqueta creada: "' + meta[0] + '"';
+    } else {
+      msg = ok + ' enviadas, ' + fallos + ' fallo(s)';
+    }
     if (sinProp) msg += ' · ' + sinProp + ' sin esa propiedad (se usó el ID)';
+    if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición';
     if (ultimoError) msg += ' · ' + ultimoError;
-    setStatus(msg, fail > 0 ? 'err' : sinProp ? 'info' : 'ok');
+
+    var mal = fallos > 0 || repetidas > 0 || (reales !== null && reales < sel.length);
+    setStatus(msg, mal ? 'err' : sinProp ? 'info' : 'ok');
 
     running = false;
     updUI();
