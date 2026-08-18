@@ -65,15 +65,17 @@ Cada pieza se resuelve por separado:
    leyendo un markup que el propio host había guardado:
 
 ```js
-start: { type: 'point', positionX, positionY, positionZ }
-end:   { type: 'point', positionX, positionY, positionZ }   // el mismo punto
+start: { type: 'point', positionX, positionY, positionZ, modelId, objectId }
+end:   { type: 'point', positionX, positionY, positionZ, modelId, objectId }
 ```
 
-Ambos puntos son el centro de la pieza, para que la etiqueta salga justo ahí.
+El ancla (`start`) es el punto donde el usuario pincha, que llega en `viewer.onPicked`.
 
-El campo `type: 'point'` es obligatorio: sin él, el visor no resuelve el punto y coloca la
-etiqueta en el origen. El host asigna su propio `id` numérico y descarta `modelId`/`objectId`
-dentro del punto, así que no se envían.
+Dos campos son imprescindibles y ninguno aparece al releer el markup:
+
+- `type: 'point'` — sin él el visor no reconoce el punto.
+- `modelId` y `objectId` — le dicen al visor a qué objeto pertenece la coordenada. Sin ellos
+  resuelve el punto en el origen del proyecto, aunque las coordenadas sean correctas.
 
 ### Verificación de lo creado
 
@@ -98,7 +100,7 @@ Trimble Connect → **Extensiones** → **Añadir extensión personalizada**, y 
 https://ingenierodeivisrodriguez-web.github.io/trimble-markup-ext/manifest.json
 ```
 
-La cabecera del panel muestra la versión (`v12`). Si no coincide con la última, recarga con
+La cabecera del panel muestra la versión (`v18`). Si no coincide con la última, recarga con
 Ctrl+F5: el navegador está sirviendo una copia cacheada.
 
 ## Archivos

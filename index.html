@@ -118,7 +118,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v17';
+  var VERSION = 'v18';
   var ID_OPT = '__id__', CENTRO_OPT = '__centro__';
   var CLASS_OPT = '__class__', GUID_OPT = '__guid__', NAME_OPT = '__name__';
   var LS = 'creadorEtiquetas.cfg';
@@ -612,19 +612,30 @@
 
   // Forma confirmada leyendo un markup guardado por este host:
   //   start/end -> { type:'point', positionX, positionY, positionZ }
-  function pick(x, y, z){
-    return { type: 'point', positionX: x, positionY: y, positionZ: z };
+  // El punto necesita ademas modelId y objectId: son los que le dicen al visor
+  // a que objeto pertenece la coordenada. Se quitaron en v8 al ver que el markup
+  // releido no los devolvia, pero que no se devuelvan al leer no significa que
+  // no hagan falta al escribir: sin ellos el visor resuelve el punto en el
+  // origen del proyecto.
+  function pick(x, y, z, modelId, objectId){
+    return {
+      type: 'point',
+      positionX: x, positionY: y, positionZ: z,
+      modelId: modelId, objectId: objectId
+    };
   }
 
   // start = ancla sobre el elemento; end = donde flota el texto. La separacion
   // es proporcional al tamano de la pieza, para que la linea guia se vea igual
   // de bien en un tornillo que en un muro.
-  function construirMarkup(texto, c){
+  function construirMarkup(texto, c, obj){
+    var mid = obj ? obj.modelId : null, oid = obj ? obj.rid : null;
     return {
       text: texto,
       color: colorRGBA(),
-      start: pick(c.x, c.y, c.z),
-      end:   inpSinGuia.checked ? pick(c.x, c.y, c.z) : pick(c.x, c.y, c.topZ + c.sep)
+      start: pick(c.x, c.y, c.z, mid, oid),
+      end:   inpSinGuia.checked ? pick(c.x, c.y, c.z, mid, oid)
+                                : pick(c.x, c.y, c.topZ + c.sep, mid, oid)
     };
   }
 
@@ -703,7 +714,7 @@
         var clave = c.x + '|' + c.y + '|' + c.z;
         if (centros[clave]) repetidas++; else centros[clave] = 1;
 
-        markups.push(construirMarkup(lineas.join('\n'), c));
+        markups.push(construirMarkup(lineas.join('\n'), c, obj));
         duenos.push(obj.modelId + ':' + obj.rid);
       } catch(e){
         errPrep++;
