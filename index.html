@@ -82,7 +82,7 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v5';
+  var VERSION = 'v6';
   var ID_OPT = '__id__', CUSTOM_OPT = '__custom__';
 
   var API = null, sel = [], autoOn = false, lastIds = '', selTimer = null, running = false;
@@ -323,19 +323,52 @@
     return 'mk-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
   }
 
-  // Cuenta las etiquetas que existen de verdad, para no fiarnos solo de que la
+  // Lee lo que el visor tiene guardado de verdad, para no fiarnos solo de que la
   // llamada no lanzara error. Devuelve null si el host no expone ningun lector.
-  async function countMarkups(mk){
+  async function leerMarkups(mk){
     var fns = ['getMarkups', 'getTextMarkups', 'getAllMarkups'];
     for (var i = 0; i < fns.length; i++){
       if (typeof mk[fns[i]] === 'function'){
         try {
           var r = await mk[fns[i]]();
-          if (Array.isArray(r)) return r.length;
+          if (Array.isArray(r)) return r;
         } catch(e){}
       }
     }
     return null;
+  }
+
+  async function countMarkups(mk){
+    var r = await leerMarkups(mk);
+    return r === null ? null : r.length;
+  }
+
+  // El nombre de los campos de MarkupPick varia segun el host: si solo enviamos
+  // positionX/Y/Z y este espera x/y/z, ignora la coordenada y coloca la etiqueta
+  // en el origen. Enviamos las tres formas conocidas a la vez; los campos que
+  // sobran se ignoran.
+  function pick(x, y, z, modelId, objectId){
+    return {
+      positionX: x, positionY: y, positionZ: z,
+      x: x, y: y, z: z,
+      position: { x: x, y: y, z: z },
+      modelId: modelId, objectId: objectId
+    };
+  }
+
+  // Extrae la coordenada de un markup ya guardado, sea cual sea su forma.
+  function posDe(m){
+    var p = m && (m.start || m.startPoint || m.position || m);
+    if (!p || typeof p !== 'object') return null;
+    var g = function(a, b){
+      if (p[a] !== undefined && p[a] !== null) return p[a];
+      if (p.position && p.position[b] !== undefined) return p.position[b];
+      if (p[b] !== undefined && p[b] !== null) return p[b];
+      return null;
+    };
+    var x = g('positionX', 'x'), y = g('positionY', 'y'), z = g('positionZ', 'z');
+    if (x === null && y === null && z === null) return null;
+    return [x, y, z].join(',');
   }
 
   // Busca en un objeto el mismo nombre de propiedad elegido en el desplegable.
@@ -415,8 +448,8 @@
         markups.push({
           id: uid(),
           text: label,
-          start: { positionX: c.x, positionY: c.y, positionZ: c.z,             modelId: obj.modelId, objectId: obj.rid },
-          end:   { positionX: c.x, positionY: c.y, positionZ: c.topZ + c.sep, modelId: obj.modelId, objectId: obj.rid },
+          start: pick(c.x, c.y, c.z,             obj.modelId, obj.rid),
+          end:   pick(c.x, c.y, c.topZ + c.sep, obj.modelId, obj.rid),
           color: { r: 0, g: 212, b: 170, a: 255 }
         });
         meta.push(label);
@@ -453,9 +486,35 @@
       }
     }
 
-    // Cuenta lo que hay de verdad en el modelo, no lo que la API acepto.
-    var despues = await countMarkups(mk);
+    // Comprueba lo que el visor guardo de verdad, no lo que la API acepto.
+    var guardados = await leerMarkups(mk);
+    var despues = guardados === null ? null : guardados.length;
     var reales = (antes !== null && despues !== null) ? (despues - antes) : null;
+
+    // Localiza por id las etiquetas que acabamos de crear y mira su coordenada
+    // real. Si el host ignoro nuestros campos, aqui saldran todas iguales (0,0,0)
+    // y lo decimos con el nombre de los campos que si reconoce.
+    var avisoPos = '';
+    if (guardados && guardados.length){
+      var mios = {}, k2;
+      for (k2 = 0; k2 < markups.length; k2++) mios[markups[k2].id] = 1;
+      var nuestros = [];
+      for (k2 = 0; k2 < guardados.length; k2++){
+        if (guardados[k2] && mios[guardados[k2].id]) nuestros.push(guardados[k2]);
+      }
+      if (!nuestros.length) nuestros = guardados.slice(-markups.length);
+
+      var posSet = {}, nPos = 0;
+      for (k2 = 0; k2 < nuestros.length; k2++){
+        var pz = posDe(nuestros[k2]);
+        if (pz === null) continue;
+        if (!posSet[pz]){ posSet[pz] = 1; nPos++; }
+      }
+      if (nuestros.length > 1 && nPos === 1){
+        var claves = Object.keys(nuestros[0].start || nuestros[0] || {}).join(',');
+        avisoPos = ' · ⚠ el visor guardó 1 sola posición (' + posDe(nuestros[0]) + ') · campos: ' + claves;
+      }
+    }
 
     var fallos = errPrep + errEnvio;
     var msg;
@@ -469,9 +528,10 @@
     }
     if (sinProp) msg += ' · ' + sinProp + ' sin esa propiedad (se usó el ID)';
     if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición (' + ultimoCentro + ')';
+    if (avisoPos) msg += avisoPos;
     if (ultimoError) msg += ' · ' + ultimoError;
 
-    var mal = fallos > 0 || repetidas > 0 || (reales !== null && reales < sel.length);
+    var mal = fallos > 0 || repetidas > 0 || avisoPos !== '' || (reales !== null && reales < sel.length);
     setStatus(msg, mal ? 'err' : sinProp ? 'info' : 'ok');
 
     running = false;
