@@ -114,11 +114,15 @@
 (function(){
   'use strict';
 
-  var VERSION = 'v9';
+  var VERSION = 'v10';
   var ID_OPT = '__id__';
   var LS = 'creadorEtiquetas.cfg';
 
   var API = null, sel = [], autoOn = true, lastIds = '', selTimer = null, running = false;
+  var selIds = '';           // firma de la seleccion ya procesada
+  var pollTimer = null;      // sondeo periodico de la seleccion
+  var eventos = [];          // nombres de eventos recibidos, para diagnostico
+  var ultimaSelCruda = null; // ultimo getSelection() sin procesar
   var available = [];        // parametros reales de la pieza seleccionada
   var elegidos = [];         // parametros marcados por el usuario (persisten)
   var extras = [];           // parametros anadidos a mano por nombre exacto
@@ -195,7 +199,13 @@
     var filas = [{ set: 'General', name: 'ID (objectRuntimeId)', qualified: ID_OPT, value: sel.length ? sel[0].rid : null }];
     var i;
     for (i = 0; i < available.length; i++) filas.push(available[i]);
+    // Un parametro anadido a mano que ya esta en la lista no se repite.
     for (i = 0; i < extras.length; i++){
+      var ex = String(extras[i]).toLowerCase(), dup = false;
+      for (var d = 0; d < available.length; d++){
+        if (String(available[d].qualified).toLowerCase() === ex || String(available[d].name).toLowerCase() === ex){ dup = true; break; }
+      }
+      if (dup) continue;
       filas.push({ set: 'Añadidos a mano', name: extras[i], qualified: extras[i], value: valorExtra(extras[i]) });
     }
 
@@ -253,10 +263,15 @@
     // Cualquier elegido que no este en la lista visible tambien cuenta.
     for (i = 0; i < elegidos.length; i++) if (orden.indexOf(elegidos[i]) < 0) orden.push(elegidos[i]);
 
-    var lineas = [];
+    var lineas = [], usados = {};
     for (i = 0; i < orden.length; i++){
       var q = orden[i];
       if (!marcado(q)) continue;
+      // Evita repetir el mismo parametro si esta listado y anadido a mano.
+      var clave = String(q).toLowerCase();
+      var corta = clave.indexOf('/') >= 0 ? clave.slice(clave.indexOf('/') + 1) : clave;
+      if (usados[corta]) continue;
+      usados[corta] = 1;
       if (q === ID_OPT){ lineas.push(String(obj.rid)); continue; }
       var v = matchValue(entries, q);
       if (v !== null) lineas.push(v);
@@ -272,17 +287,63 @@
   }
 
   // -- Selección ---------------------------------------------------
+  // Tolerante con las formas conocidas de devolver una seleccion.
   function parseSel(data){
     var out = [];
-    var items = data || [];
-    if (!Array.isArray(items)) items = [items];
+    var items = data;
+    if (items && !Array.isArray(items)){
+      if (Array.isArray(items.selection)) items = items.selection;
+      else if (Array.isArray(items.objects)) items = items.objects;
+      else items = [items];
+    }
+    if (!Array.isArray(items)) return out;
+
     for (var i = 0; i < items.length; i++){
-      var item = items[i];
-      if (!item) continue;
-      var ids = item.objectRuntimeIds || (item.objectRuntimeId != null ? [item.objectRuntimeId] : []);
-      for (var j = 0; j < ids.length; j++) out.push({ modelId: item.modelId, rid: ids[j] });
+      var it = items[i];
+      if (it == null) continue;
+      if (typeof it === 'number' || typeof it === 'string'){ out.push({ modelId: null, rid: it }); continue; }
+
+      var mid = it.modelId != null ? it.modelId : it.modelID;
+
+      if (Array.isArray(it.objects)){
+        for (var j = 0; j < it.objects.length; j++){
+          var o = it.objects[j];
+          var r = o && (o.objectRuntimeId != null ? o.objectRuntimeId : o.id);
+          if (r != null) out.push({ modelId: mid, rid: r });
+        }
+        continue;
+      }
+
+      var ids = it.objectRuntimeIds || it.objectRuntimeIDs || it.objectIds || it.ids;
+      if (!ids && it.objectRuntimeId != null) ids = [it.objectRuntimeId];
+      if (!ids && it.id != null) ids = [it.id];
+      if (!Array.isArray(ids)) ids = ids != null ? [ids] : [];
+      for (var k = 0; k < ids.length; k++) out.push({ modelId: mid, rid: ids[k] });
     }
     return out;
+  }
+
+  // Punto unico por el que entra cualquier cambio de seleccion, venga del evento
+  // del visor o del sondeo. No dependemos de que el evento llegue.
+  async function sincronizar(forzar){
+    if (!API || running) return;
+    var s;
+    try {
+      ultimaSelCruda = await API.viewer.getSelection();
+      s = parseSel(ultimaSelCruda);
+    } catch(e){ return; }
+
+    var ids = s.map(function(o){ return o.modelId + ':' + o.rid; }).join(',');
+    if (ids === selIds && !forzar) return;
+    selIds = ids;
+    sel = s;
+    updUI();
+    await loadProps(false);
+
+    if (autoOn && sel.length && elegidos.length && ids !== lastIds){
+      lastIds = ids;
+      etiquetar();
+    }
   }
 
   // -- Lectura de propiedades --------------------------------------
@@ -586,20 +647,12 @@
   }
 
   // -- Conexión -----------------------------------------------------
+  // Acepta cualquier evento de seleccion, se llame como se llame en este host.
   function onEvent(ev, data){
-    if (ev !== 'viewer.modelObject.selection') return;
-    sel = parseSel(data);
-    updUI();
+    if (eventos.indexOf(ev) < 0){ eventos.push(ev); if (eventos.length > 25) eventos.shift(); }
+    if (!/selection|select/i.test(String(ev))) return;
     if (selTimer) clearTimeout(selTimer);
-    selTimer = setTimeout(async function(){
-      selTimer = null;
-      await loadProps(false);
-      if (!autoOn || !sel.length || !elegidos.length) return;
-      var ids = sel.map(function(o){ return o.modelId + ':' + o.rid; }).join(',');
-      if (ids === lastIds) return;
-      lastIds = ids;
-      etiquetar();
-    }, 450);
+    selTimer = setTimeout(function(){ selTimer = null; sincronizar(false); }, 350);
   }
 
   async function init(){
@@ -609,13 +662,13 @@
       setStatus(markupApi()
         ? 'Conectado. Marca los parámetros y haz clic en una pieza.'
         : 'Conectado, pero la API de markup no está disponible.', markupApi() ? 'ok' : 'err');
-      try {
-        sel = parseSel(await API.viewer.getSelection());
-        updUI();
-        await loadProps(false);
-      } catch(e){
-        setStatus('No se pudo leer la selección: ' + errMsg(e), 'err');
-      }
+
+      await sincronizar(true);
+
+      // El evento de seleccion no llega en todos los hosts, asi que ademas
+      // sondeamos: es lo que hace que "etiquetar al hacer clic" funcione siempre.
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(function(){ sincronizar(false); }, 1000);
     } catch(e){
       dot.classList.add('err');
       setStatus('Error al conectar: ' + errMsg(e), 'err');
@@ -645,8 +698,7 @@
   $('btnR').addEventListener('click', async function(){
     if (!API){ setStatus('Sin conexión con Trimble Connect.', 'err'); return; }
     try {
-      sel = parseSel(await API.viewer.getSelection());
-      updUI();
+      await sincronizar(true);
       await loadProps(true);
     } catch(e){ setStatus('Error al recargar: ' + errMsg(e), 'err'); }
   });
@@ -661,10 +713,22 @@
   $('btnD').addEventListener('click', async function(){
     var mk = markupApi();
     if (!mk){ setStatus('No hay API de markup en este contexto.', 'err'); return; }
-    setStatus('Leyendo markups guardados…', 'info');
+    setStatus('Leyendo…', 'info');
     try {
+      var partes = [];
+
+      // -- Selección: lo primero, porque si esto falla no hay etiquetas --
+      var cruda = null;
+      try { cruda = await API.viewer.getSelection(); } catch(e){ cruda = 'ERROR: ' + errMsg(e); }
+      var crudaTxt = JSON.stringify(cruda);
+      if (crudaTxt && crudaTxt.length > 400) crudaTxt = crudaTxt.slice(0, 400) + '…';
+      partes.push('getSelection(): ' + crudaTxt);
+      partes.push('Piezas interpretadas: ' + parseSel(cruda).length + ' · en panel: ' + sel.length);
+      partes.push('Eventos recibidos: ' + (eventos.length ? eventos.join(', ') : 'NINGUNO'));
+      partes.push('');
+
       var guardados = await leerMarkups(mk);
-      var partes = ['API.markup: ' + Object.keys(mk).join(', ')];
+      partes.push('API.markup: ' + Object.keys(mk).join(', '));
       if (guardados === null){
         partes.push('El host no expone ningún lector de markups.');
       } else if (!guardados.length){
