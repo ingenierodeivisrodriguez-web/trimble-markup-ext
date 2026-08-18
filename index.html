@@ -49,7 +49,7 @@
 <div class="app">
   <div class="hdr">
     <div class="hdr-ico"><svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm0 8h2v-2H3v2zm0 8h2v-2H3v2zm4-4h14v-2H7v2zm0-8v2h14V9H7zm0-6v2h14V3H7z"/></svg></div>
-    <div><div style="font-weight:500;font-size:13px">Creador de Etiquetas</div><div style="font-size:10px;color:var(--m);font-family:'IBM Plex Mono',monospace">Extensión de Trimble Connect</div></div>
+    <div><div style="font-weight:500;font-size:13px">Creador de Etiquetas</div><div style="font-size:10px;color:var(--m);font-family:'IBM Plex Mono',monospace" id="ver">Extensión de Trimble Connect</div></div>
     <div class="dot" id="dot"></div>
   </div>
 
@@ -82,6 +82,7 @@
 (function(){
   'use strict';
 
+  var VERSION = 'v5';
   var ID_OPT = '__id__', CUSTOM_OPT = '__custom__';
 
   var API = null, sel = [], autoOn = false, lastIds = '', selTimer = null, running = false;
@@ -294,6 +295,16 @@
       z: (num(min.z) + num(max.z)) / 2
     };
     if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.z)) throw new Error('coordenadas no numéricas');
+
+    // Separacion proporcional al tamano de la pieza, para que el texto quede por
+    // encima de SU elemento con una linea guia propia y no encima de la geometria.
+    var dx = Math.abs(num(max.x) - num(min.x)),
+        dy = Math.abs(num(max.y) - num(min.y)),
+        dz = Math.abs(num(max.z) - num(min.z));
+    var tam = Math.max(dx, dy, dz);
+    c.sep = isFinite(tam) && tam > 0 ? tam * 0.35 : 0;
+    c.topZ = num(max.z);
+    if (!isFinite(c.topZ)) c.topZ = c.z;
     return c;
   }
 
@@ -373,7 +384,7 @@
     var antes = await countMarkups(mk);
 
     var markups = [], meta = [], errPrep = 0, sinProp = 0;
-    var centros = {}, repetidas = 0;
+    var centros = {}, repetidas = 0, ultimoCentro = '';
 
     for (var i = 0; i < sel.length; i++){
       var obj = sel[i];
@@ -397,12 +408,15 @@
         var c = await readCenter(obj.modelId, obj.rid);
         var clave = c.x + '|' + c.y + '|' + c.z;
         if (centros[clave]) repetidas++; else centros[clave] = 1;
+        ultimoCentro = clave;
 
+        // start = ancla en la propia pieza; end = texto justo encima de ella.
+        // Con start y end iguales el visor coloca todos los textos juntos.
         markups.push({
           id: uid(),
           text: label,
-          start: { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
-          end:   { positionX: c.x, positionY: c.y, positionZ: c.z, modelId: obj.modelId, objectId: obj.rid },
+          start: { positionX: c.x, positionY: c.y, positionZ: c.z,             modelId: obj.modelId, objectId: obj.rid },
+          end:   { positionX: c.x, positionY: c.y, positionZ: c.topZ + c.sep, modelId: obj.modelId, objectId: obj.rid },
           color: { r: 0, g: 212, b: 170, a: 255 }
         });
         meta.push(label);
@@ -454,7 +468,7 @@
       msg = ok + ' enviadas, ' + fallos + ' fallo(s)';
     }
     if (sinProp) msg += ' · ' + sinProp + ' sin esa propiedad (se usó el ID)';
-    if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición';
+    if (repetidas) msg += ' · ⚠ ' + repetidas + ' comparten posición (' + ultimoCentro + ')';
     if (ultimoError) msg += ' · ' + ultimoError;
 
     var mal = fallos > 0 || repetidas > 0 || (reales !== null && reales < sel.length);
@@ -528,6 +542,10 @@
   window.addEventListener('error', function(e){
     setStatus('Error de JavaScript: ' + (e.message || 'desconocido'), 'err');
   });
+
+  // Marca de version visible: sirve para saber de un vistazo si el navegador
+  // esta sirviendo una copia cacheada antigua.
+  $('ver').textContent = 'Extensión de Trimble Connect · ' + VERSION;
 
   init();
 })();
